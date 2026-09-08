@@ -36,9 +36,12 @@ from h3_backend import (
     GenerationCancelledError,
     H3Engine,
     LoraRef,
+    fl2va_dir,
+    model_layout_ok,
     parse_refs_payload,
     ram_gb,
     recommend_ssd_streaming,
+    ref2va_dir,
 )
 from h3_media import (
     DURATION_PRESETS,
@@ -67,6 +70,7 @@ log = logging.getLogger("h3-web")
 
 INDEX_FILE = "index.json"
 SETTINGS_FILE = "settings.json"
+USER_DATA_FILE = "user_data.json"
 CLIP_MULTIPLIER_MAX = 10
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "web_outputs"
 DEFAULT_UPLOAD_DIR = REPO_ROOT / "web_uploads"
@@ -160,6 +164,34 @@ class AppState:
         self._sigint_count = 0
         self._sigint_last_ts = 0.0
         self._uvicorn_server: Any = None
+        self.user_data_path = self.output_dir / USER_DATA_FILE
+        self.presets: list[dict[str, Any]] = []
+        self.cast_members: list[dict[str, Any]] = []
+        self._load_user_data()
+
+    # ── User data (presets + cast) persistence ───────────────────────────────
+    # Stored separately from the generation index so presets/cast survive
+    # server restarts and are not wiped by session clear.
+
+    def _load_user_data(self) -> None:
+        try:
+            if not self.user_data_path.is_file():
+                return
+            data = json.loads(self.user_data_path.read_text(encoding="utf-8"))
+            self.presets = data.get("presets", []) or []
+            self.cast_members = data.get("cast", []) or []
+        except (json.JSONDecodeError, OSError):
+            log.warning("Could not read user data at %s", self.user_data_path)
+
+    def _save_user_data(self) -> None:
+        try:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            data = {"presets": self.presets, "cast": self.cast_members}
+            self.user_data_path.write_text(
+                json.dumps(data, indent=2), encoding="utf-8"
+            )
+        except OSError as exc:
+            log.warning("Could not save user data: %s", exc)
 
     def is_generation_active(self) -> bool:
         return self._active_run_id is not None
@@ -997,6 +1029,283 @@ def create_app(
             "pyav_available": media_available(),
         }
 
+    # ── Models management (status + user-confirmed download) ─────────────────
+
+    def _component_status(model_dir: Path) -> list[dict[str, Any]]:
+        """Return present/missing status for FL2VA and Ref2VA components."""
+        def _dir_gib(path: Path) -> float:
+            total = 0
+            for p in path.rglob("*"):
+                if p.is_file():
+                    try:
+                        total += p.stat().st_size
+                    except OSError:
+                        pass
+            return total / (1024 ** 3)
+
+        def _has_safetensors(path: Path) -> bool:
+            return path.is_dir() and any(path.glob("*.safetensors"))
+
+        fl = fl2va_dir(model_dir)
+        r2 = ref2va_dir(model_dir)
+        fl_ok, _ = model_layout_ok(model_dir)
+        r2_ok, _ = model_layout_ok(model_dir, need_ref2va=True)
+        return [
+            {
+                "id": "fl2va",
+                "label": "FL2VA (core)",
+                "present": fl_ok,
+                "path": str(fl),
+                "size_gib": round(_dir_gib(fl), 1),
+                "note": "Required for t2va / first / last frame generation.",
+            },
+            {
+                "id": "ref2va",
+                "label": "Ref2VA (references)",
+                "present": r2_ok,
+                "path": str(r2),
+                "size_gib": round(_dir_gib(r2), 1),
+                "note": "Required for reference (image/video) modes.",
+            },
+        ]
+
+    @app.get("/api/models")
+    async def api_models_status():
+        model_dir = state.engine.model_dir
+        return {
+            "ok": True,
+            "model_dir": str(model_dir),
+            "components": _component_status(model_dir),
+        }
+
+    # ── Download state for SSE progress ───────────────────────────────────────
+    # Owned server-side so the task survives client disconnects. Stores the
+    # asyncio.Task handle so a reconnect re-attaches instead of double-starting.
+    _download_state: dict[str, Any] = {
+        "active": False,
+        "component": None,
+        "error": None,
+        "task": None,
+    }
+
+    # Approximate expected sizes in bytes (matching scripts/download_model.py).
+    EXPECTED_BYTES = {
+        "fl2va": 134.1 * 1024**3,   # ~134 GB
+        "ref2va": 61.7 * 1024**3,   # ~62 GB (transformer only)
+    }
+
+    _COMPONENT_DIR = {"fl2va": "FL2VA", "ref2va": "Ref2VA"}
+
+    def _component_progress(model_dir: Path, component: str) -> tuple[int, int]:
+        """Sum bytes of .incomplete partials + already-relocated final files.
+
+        ``snapshot_download --local-dir=models/MiniMax-H3`` writes partials into
+        the component's PRIVATE cache dir:
+            models/MiniMax-H3/.cache/huggingface/download/{FL2VA|Ref2VA}/...incomplete
+        The global hub cache (~/.cache/huggingface/hub/blobs) is a DIFFERENT, stale
+        repo and must not drive the progress bar.
+        """
+        comp_dir = _COMPONENT_DIR.get(component)
+        if not comp_dir:
+            return 0, 0
+        root = model_dir / ".cache" / "huggingface" / "download" / comp_dir
+        if not root.is_dir():
+            return 0, 0
+        incomplete = 0
+        complete = 0
+        for p in root.rglob("*"):
+            if not p.is_file():
+                continue
+            try:
+                size = p.stat().st_size
+            except OSError:
+                continue
+            if p.suffix == ".incomplete":
+                incomplete += size
+            else:
+                complete += size
+        return complete, incomplete
+
+    async def _run_download(component: str) -> None:
+        """Run download in the background; update _download_state on finish."""
+        script = REPO_ROOT / "scripts" / "download_model.py"
+        cmd = [sys.executable, str(script), "--local-dir", str(state.engine.model_dir)]
+        if component == "ref2va":
+            cmd.append("--with-ref2va")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            output, _ = await proc.communicate()
+            text = output.decode("utf-8", "replace")
+            if proc.returncode != 0:
+                _download_state["error"] = text.strip()[-2000:] or "download failed"
+            else:
+                _download_state["error"] = None
+        except Exception as exc:
+            _download_state["error"] = str(exc)
+        finally:
+            _download_state["active"] = False
+            _download_state["task"] = None
+            _download_state["component"] = None
+
+    @app.get("/api/models/download/status")
+    async def api_models_download_status():
+        """Return whether a download is in flight and, if so, its live progress."""
+        st = _download_state
+        task = st.get("task")
+        active = bool(st.get("active")) and task is not None and not task.done()
+        out: dict[str, Any] = {
+            "active": active,
+            "component": st.get("component"),
+            "error": st.get("error"),
+        }
+        if active and st.get("component"):
+            comp = st["component"]
+            complete, incomplete = await asyncio.to_thread(
+                _component_progress, state.engine.model_dir, comp
+            )
+            current = complete + incomplete
+            expected = EXPECTED_BYTES.get(comp, 0)
+            pct = min(99, int(100 * current / expected)) if expected > 0 else 0
+            out["progress"] = {
+                "percent": pct,
+                "downloaded_gb": round(current / 1024**3, 2),
+                "expected_gb": round(expected / 1024**3, 1),
+            }
+        return out
+
+    @app.get("/api/models/download/stream")
+    async def api_models_download_stream(component: str):
+        """SSE endpoint for download progress.
+
+        The download task is owned server-side and survives client disconnects:
+        a reconnect re-attaches to the same in-flight task. Only ONE terminal
+        event fires when the task finishes; state is then cleared so a later
+        manual re-download works.
+        """
+        from sse_starlette.sse import EventSourceResponse
+        import time
+
+        component = component.strip().lower()
+        if component not in ("fl2va", "ref2va"):
+            raise HTTPException(400, "component must be 'fl2va' or 'ref2va'")
+
+        st = _download_state
+        task = st.get("task")
+        running = task is not None and not task.done()
+
+        if running and st.get("component") != component:
+            raise HTTPException(409, f"another component ({st['component']}) is downloading")
+
+        # Spawn the download only if none is running; otherwise re-attach.
+        if not running:
+            st["active"] = True
+            st["component"] = component
+            st["error"] = None
+            st["task"] = asyncio.create_task(_run_download(component))
+
+        expected = EXPECTED_BYTES.get(component, 0)
+        last_total = 0
+        last_time = time.time()
+
+        async def event_generator():
+            try:
+                while True:
+                    cur_task = st.get("task")
+                    if cur_task is None or cur_task.done():
+                        break
+                    complete, incomplete = await asyncio.to_thread(
+                        _component_progress, state.engine.model_dir, component
+                    )
+                    current = complete + incomplete
+                    now = time.time()
+                    speed = 0.0
+                    if now - last_time >= 0.5:
+                        speed = (current - last_total) / (now - last_time)
+                        last_total = current
+                        last_time = now
+                    pct = min(99, int(100 * current / expected)) if expected > 0 else 0
+                    if speed > 1024**2:
+                        speed_str = f"{speed / 1024**2:.1f} MB/s"
+                    elif speed > 1024:
+                        speed_str = f"{speed / 1024:.0f} KB/s"
+                    else:
+                        speed_str = f"{speed:.0f} B/s" if speed > 0 else "starting..."
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps({
+                            "percent": pct,
+                            "downloaded_gb": round(current / 1024**3, 2),
+                            "expected_gb": round(expected / 1024**3, 1),
+                            "speed": speed_str,
+                            "active": True,
+                        }),
+                    }
+                    await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                # Client disconnected — the download task continues server-side.
+                raise
+
+            # Terminal event — the task has finished.
+            if st["error"]:
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"error": st["error"]}),
+                }
+            else:
+                yield {
+                    "event": "complete",
+                    "data": json.dumps({
+                        "ok": True,
+                        "components": _component_status(state.engine.model_dir),
+                    }),
+                }
+
+        return EventSourceResponse(event_generator())
+
+    @app.post("/api/models/download")
+    async def api_models_download(body: dict[str, Any]):
+        """User-confirmed download of a missing model component (legacy blocking).
+
+        Prefer /api/models/download/stream for progress tracking.
+        huggingface_hub natively resumes partial downloads.
+        """
+        component = str(body.get("component") or "").strip().lower()
+        if component not in ("fl2va", "ref2va"):
+            raise HTTPException(400, "component must be 'fl2va' or 'ref2va'")
+        script = REPO_ROOT / "scripts" / "download_model.py"
+        if not script.is_file():
+            raise HTTPException(500, f"Download script not found at {script}")
+        cmd = [sys.executable, str(script), "--local-dir", str(state.engine.model_dir)]
+        if component == "ref2va":
+            cmd.append("--with-ref2va")
+
+        async def _run() -> dict[str, Any]:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                output, _ = await proc.communicate()
+                text = output.decode("utf-8", "replace")
+                if proc.returncode != 0:
+                    return {"ok": False, "error": text.strip()[-2000:] or "download failed"}
+                return {
+                    "ok": True,
+                    "components": _component_status(state.engine.model_dir),
+                }
+            except Exception as exc:  # pragma: no cover - os-level failures
+                return {"ok": False, "error": str(exc)}
+
+        result = await _run()
+        if not result["ok"]:
+            raise HTTPException(500, result.get("error", "download failed"))
+        return result
+
     @app.post("/api/loras/ensure")
     async def api_lora_ensure(body: dict[str, Any]):
         spec = normalize_lora_spec(str(body.get("spec") or body.get("url") or ""))
@@ -1048,6 +1357,91 @@ def create_app(
         entries = [e for e in read_custom_loras(state.output_dir) if e["id"] != lora_id]
         write_custom_loras(state.output_dir, entries)
         return {"ok": True, "lora_presets": lora_catalog(state.output_dir)}
+
+    # ── Presets (persistent, survive restarts) ───────────────────────────────
+
+    @app.get("/api/presets")
+    async def api_presets_list():
+        state.presets.sort(key=lambda p: p.get("updatedAt", ""), reverse=True)
+        return {"presets": state.presets}
+
+    @app.post("/api/presets")
+    async def api_presets_save(body: dict[str, Any]):
+        name = str(body.get("name") or "").strip()
+        if not name:
+            raise HTTPException(400, "name is required")
+        preset = dict(body)
+        now = datetime.now().isoformat()
+        if not preset.get("id"):
+            preset["id"] = f"preset_{uuid.uuid4().hex[:8]}"
+        preset["name"] = name
+        preset["createdAt"] = preset.get("createdAt") or now
+        preset["updatedAt"] = now
+        existing = next((p for p in state.presets if p.get("id") == preset["id"]), None)
+        if existing is not None:
+            state.presets.remove(existing)
+        state.presets.append(preset)
+        state._save_user_data()
+        return {"ok": True, "preset": preset}
+
+    @app.delete("/api/presets/{preset_id}")
+    async def api_presets_delete(preset_id: str):
+        before = len(state.presets)
+        state.presets = [p for p in state.presets if p.get("id") != preset_id]
+        if len(state.presets) == before:
+            raise HTTPException(404, "Preset not found")
+        state._save_user_data()
+        return {"ok": True, "deleted": preset_id}
+
+    # ── Cast members (persistent, survive restarts) ──────────────────────────
+
+    @app.get("/api/cast")
+    async def api_cast_list():
+        state.cast_members.sort(key=lambda c: c.get("name", "").lower())
+        return {"cast": state.cast_members}
+
+    @app.post("/api/cast")
+    async def api_cast_create(body: dict[str, Any]):
+        name = str(body.get("name") or "").strip()
+        if not name:
+            raise HTTPException(400, "name is required")
+        now = datetime.now().isoformat()
+        member = {
+            "id": f"cast_{uuid.uuid4().hex[:8]}",
+            "name": name,
+            "description": str(body.get("description") or "").strip() or None,
+            "media": body.get("media") or [],
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        state.cast_members.append(member)
+        state._save_user_data()
+        return {"ok": True, "cast": member}
+
+    @app.put("/api/cast/{cast_id}")
+    async def api_cast_update(cast_id: str, body: dict[str, Any]):
+        member = next((c for c in state.cast_members if c.get("id") == cast_id), None)
+        if member is None:
+            raise HTTPException(404, "Cast member not found")
+        name = str(body.get("name") or "").strip()
+        if name:
+            member["name"] = name
+        if "description" in body:
+            member["description"] = str(body.get("description") or "").strip() or None
+        if "media" in body:
+            member["media"] = body.get("media") or []
+        member["updatedAt"] = datetime.now().isoformat()
+        state._save_user_data()
+        return {"ok": True, "cast": member}
+
+    @app.delete("/api/cast/{cast_id}")
+    async def api_cast_delete(cast_id: str):
+        before = len(state.cast_members)
+        state.cast_members = [c for c in state.cast_members if c.get("id") != cast_id]
+        if len(state.cast_members) == before:
+            raise HTTPException(404, "Cast member not found")
+        state._save_user_data()
+        return {"ok": True, "deleted": cast_id}
 
     @app.get("/api/clips")
     async def list_clips(chain_id: Optional[str] = None):
@@ -1235,6 +1629,12 @@ def create_app(
             q = state.event_queues[run_id]
             run = state.runs[run_id]
             if run.status in (RunStatus.DONE.value, RunStatus.FAILED.value, RunStatus.CANCELLED.value):
+                if run.status == RunStatus.FAILED.value:
+                    yield f"data: {json.dumps({'type': 'error', 'error': run.error or 'Generation failed', 'run_id': run_id})}\n\n"
+                    return
+                if run.status == RunStatus.CANCELLED.value:
+                    yield f"data: {json.dumps({'type': 'run_cancelled', 'run_id': run_id, 'message': 'Generation cancelled'})}\n\n"
+                    return
                 if run.status == RunStatus.DONE.value and run.merged_clip_id:
                     merged = state.clips.get(run.merged_clip_id)
                     if merged and merged.video_url:

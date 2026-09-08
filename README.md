@@ -7,7 +7,7 @@ Open **http://127.0.0.1:8765/** after starting the server.
 ## Requirements
 
 - Apple Silicon Mac (Metal)
-- Python 3.11+ with packages from `requirements.txt` (PyAV `av` for all media, including the h3.c mux/decode shim)
+- Python 3.12+ with packages from `requirements.txt` (PyAV `av` for all media, including the h3.c mux/decode shim)
 - Node.js 18+ (to build the UI)
 - Xcode command-line tools (`make`)
 - Enough unified memory for the model (~40 GB peak). Use `--ssd-streaming` if you have under ~64 GB.

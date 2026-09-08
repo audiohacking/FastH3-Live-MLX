@@ -1,0 +1,393 @@
+/*
+ * Reference Chips Stylesheet
+ * Media reference chips displayed in prompt area with popovers
+ */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Chip Container (wraps chips above/below prompt)
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.chips-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--chip-gap);
+  padding: var(--space-2) 0;
+}
+
+.chips-container--above {
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-2);
+}
+
+.chips-container--inline {
+  display: inline-flex;
+  padding: 0;
+  gap: var(--space-2);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Reference Chip
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.ref-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--chip-height);
+  padding: 0 var(--chip-padding-x);
+  background: var(--chip-bg);
+  color: var(--chip-color);
+  border: 1px solid var(--chip-border);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: default;
+  transition: all var(--transition-fast);
+  max-width: 180px;
+}
+
+.ref-chip:hover {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+}
+
+.ref-chip--image {
+  --chip-bg: #dbeafe;
+  --chip-color: #1e40af;
+  --chip-border: #93c5fd;
+}
+
+.ref-chip--video,
+.ref-chip--silent_video {
+  --chip-bg: #dcfce7;
+  --chip-color: #166534;
+  --chip-border: #86efac;
+}
+
+.ref-chip--video_audio {
+  --chip-bg: #fef3c7;
+  --chip-color: #92400e;
+  --chip-border: #fcd34d;
+}
+
+.ref-chip--audio {
+  --chip-bg: #fce7f3;
+  --chip-color: #9d174d;
+  --chip-border: #f9a8d4;
+}
+
+.ref-chip__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.ref-chip__icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.ref-chip__token {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ref-chip__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+  font-weight: 400;
+}
+
+.ref-chip__remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: var(--space-1);
+  margin-right: calc(var(--chip-padding-x) * -0.5);
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: all var(--transition-fast);
+}
+
+.ref-chip__remove:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.ref-chip__remove svg {
+  width: 10px;
+  height: 10px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Add Reference Button (looks like a chip)
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.ref-chip-add {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--chip-height);
+  padding: 0 var(--chip-padding-x);
+  background: transparent;
+  color: var(--color-muted);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-full);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.ref-chip-add:hover:not(:disabled) {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  border-style: solid;
+  background: var(--color-accent-soft);
+}
+
+.ref-chip-add:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ref-chip-add__icon {
+  width: 12px;
+  height: 12px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Reference Chip Popover
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.ref-chip-popover {
+  position: absolute;
+  z-index: var(--z-tooltip);
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 200px;
+  max-width: 280px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-3);
+  animation: popover-in 0.15s ease;
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.ref-chip-popover::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--color-surface);
+}
+
+.ref-chip-popover::before {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 7px solid transparent;
+  border-top-color: var(--color-border);
+}
+
+.ref-chip-popover__preview {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  background: #111;
+  margin-bottom: var(--space-3);
+}
+
+.ref-chip-popover__title {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--space-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ref-chip-popover__meta {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  margin: 0;
+}
+
+.ref-chip-popover__actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Reference List (enhanced version)
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.ref-list-enhanced {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ref-list-enhanced__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ref-list-enhanced__title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ref-list-enhanced__count {
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+  background: var(--color-bg);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.ref-list-enhanced__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ref-list-enhanced__help {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.ref-list-enhanced__help code {
+  background: var(--color-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.ref-list-enhanced__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+}
+
+.ref-list-enhanced__error {
+  font-size: var(--font-size-sm);
+  color: var(--color-danger);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-danger-soft);
+  border-radius: var(--radius-md);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Reference Source Pickers (dropdowns for frames/clips)
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.ref-source-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.ref-source-picker__label {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.ref-source-picker__select {
+  height: 32px;
+  padding: 0 var(--space-3);
+  padding-right: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+.ref-source-picker__select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.ref-source-picker__select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Responsive
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .ref-chip {
+    max-width: 140px;
+  }
+
+  .ref-chip__name {
+    display: none;
+  }
+
+  .ref-chip-popover {
+    min-width: 160px;
+    max-width: 220px;
+  }
+
+  .ref-list-enhanced__buttons {
+    flex-direction: column;
+  }
+
+  .ref-list-enhanced__buttons .ref-chip-add {
+    justify-content: center;
+  }
+}

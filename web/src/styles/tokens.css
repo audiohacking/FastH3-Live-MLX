@@ -1,0 +1,134 @@
+/*
+ * Design Tokens for h3-ws UI
+ * Extracted from index.css - source of truth for all design values
+ */
+
+:root {
+  /* ─────────────────────────────────────────────────────────────────────────
+   * Colors - Core Palette
+   * ───────────────────────────────────────────────────────────────────────── */
+  --color-bg: #f4f4f5;
+  --color-surface: #ffffff;
+  --color-text: #18181b;
+  --color-muted: #71717a;
+  --color-border: #e4e4e7;
+  --color-border-hover: #cbd5e1;
+
+  /* Accent */
+  --color-accent: #2563eb;
+  --color-accent-soft: #dbeafe;
+  --color-accent-dark: #1e3a8a;
+  --color-accent-border: #bfdbfe;
+
+  /* Status */
+  --color-success: #22c55e;
+  --color-danger: #dc2626;
+  --color-danger-soft: #fef2f2;
+  --color-danger-border: #fecaca;
+
+  /* Overlays */
+  --color-overlay-dark: rgba(0, 0, 0, 0.55);
+  --color-overlay-light: rgba(255, 255, 255, 0.9);
+  --color-backdrop: rgba(0, 0, 0, 0.75);
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * Typography
+   * ───────────────────────────────────────────────────────────────────────── */
+  --font-family: "DM Sans", system-ui, sans-serif;
+  --font-size-xs: 0.65rem;
+  --font-size-sm: 0.75rem;
+  --font-size-base: 0.85rem;
+  --font-size-md: 0.95rem;
+  --font-size-lg: 1.1rem;
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * Spacing
+   * ───────────────────────────────────────────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 14px;
+  --space-7: 16px;
+  --space-8: 20px;
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * Radii
+   * ───────────────────────────────────────────────────────────────────────── */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-full: 999px;
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * Shadows
+   * ───────────────────────────────────────────────────────────────────────── */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 24px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.14);
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * Transitions
+   * ───────────────────────────────────────────────────────────────────────── */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s ease;
+  --transition-slow: 0.35s ease;
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * Z-Index Layers
+   * ───────────────────────────────────────────────────────────────────────── */
+  --z-base: 0;
+  --z-dropdown: 40;
+  --z-modal: 50;
+  --z-overlay: 60;
+  --z-tooltip: 70;
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * Component-specific tokens
+   * ───────────────────────────────────────────────────────────────────────── */
+
+  /* Pills */
+  --pill-height: 32px;
+  --pill-padding-x: 12px;
+  --pill-gap: 2px;
+  --pill-divider-width: 1px;
+  --pill-divider-color: var(--color-border);
+
+  /* Chips (reference tokens in prompt) */
+  --chip-height: 24px;
+  --chip-padding-x: 8px;
+  --chip-gap: 6px;
+  --chip-bg: var(--color-accent-soft);
+  --chip-color: var(--color-accent-dark);
+  --chip-border: var(--color-accent-border);
+
+  /* Turbo toggle */
+  --turbo-color: #f59e0b;
+  --turbo-color-soft: #fef3c7;
+  --turbo-color-dark: #b45309;
+
+  /* Timeline */
+  --timeline-height: 80px;
+  --timeline-clip-min-width: 100px;
+  --timeline-seam-width: 4px;
+
+  /* Modal */
+  --modal-max-width: 900px;
+  --modal-padding: 24px;
+}
+
+/* Legacy variable aliases for backward compatibility with index.css */
+:root {
+  --bg: var(--color-bg);
+  --surface: var(--color-surface);
+  --text: var(--color-text);
+  --muted: var(--color-muted);
+  --border: var(--color-border);
+  --accent: var(--color-accent);
+  --accent-soft: var(--color-accent-soft);
+  --danger: var(--color-danger);
+  --radius: var(--radius-xl);
+  --shadow: var(--shadow-md);
+}

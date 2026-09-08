@@ -101,6 +101,9 @@ def _parse_hf_resolve(url: str) -> tuple[str, str, str] | None:
         revision = parts[3]
         filename = "/".join(parts[4:])
         return repo, revision, filename
+    # Handle /repo/name/resolve/revision without filename
+    if len(parts) == 4 and parts[2] == "resolve":
+        return f"{parts[0]}/{parts[1]}", parts[3], ""
     if len(parts) == 2:
         return f"{parts[0]}/{parts[1]}", "main", ""
     return None

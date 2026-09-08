@@ -1,0 +1,236 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Preset Manager Styles
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.preset-manager {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.preset-manager__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.preset-manager__toggle:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  background: var(--bg-tertiary);
+}
+
+.preset-manager__toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.preset-manager__icon {
+  width: 16px;
+  height: 16px;
+  transition: transform var(--transition-fast);
+}
+
+.preset-manager__icon--open {
+  transform: rotate(180deg);
+}
+
+.preset-manager__count {
+  margin-left: auto;
+  padding: var(--space-1) var(--space-2);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.preset-manager__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.preset-manager__empty {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  margin: 0;
+  padding: var(--space-4);
+}
+
+.preset-manager__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.preset-manager__save-btn {
+  padding: var(--space-3);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+}
+
+.preset-manager__save-btn:hover:not(:disabled) {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  background: var(--accent-soft);
+}
+
+.preset-manager__save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Preset Card
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.preset-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.preset-card:hover {
+  border-color: var(--accent-color);
+  background: var(--accent-soft);
+}
+
+.preset-card__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.preset-card__name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.preset-card__description {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preset-card__meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.preset-card__delete {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.preset-card__delete:hover {
+  color: var(--error-color);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Preset Save Form
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.preset-save-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.preset-save-form__input {
+  padding: var(--space-3);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.preset-save-form__input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+
+.preset-save-form__input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.preset-save-form__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.preset-save-form__btn {
+  flex: 1;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.preset-save-form__btn--save {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: white;
+}
+
+.preset-save-form__btn--save:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.preset-save-form__btn--save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.preset-save-form__btn--cancel {
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+}
+
+.preset-save-form__btn--cancel:hover {
+  background: var(--bg-tertiary);
+}

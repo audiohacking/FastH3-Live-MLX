@@ -1,38 +1,7 @@
 import { useRef } from "react";
-import type { Clip, LibraryFrame, ReferenceItem, RefKind } from "./types";
-import { generateId } from "./utils";
-
-const KIND_LABEL: Record<RefKind, string> = {
-  image: "Picture",
-  silent_video: "Silent video",
-  video: "Video",
-  video_audio: "Video + audio",
-  audio: "Audio",
-};
-
-function promptToken(kind: RefKind, indexAmongKind: number): string {
-  if (kind === "image") return `Picture ${indexAmongKind}`;
-  if (kind === "audio") return `Audio ${indexAmongKind}`;
-  return `Video ${indexAmongKind}`;
-}
-
-function tokensFor(refs: ReferenceItem[]): string[] {
-  let pictures = 0;
-  let videos = 0;
-  let audios = 0;
-  return refs.map((ref) => {
-    if (ref.kind === "image") {
-      pictures += 1;
-      return promptToken("image", pictures);
-    }
-    if (ref.kind === "audio") {
-      audios += 1;
-      return promptToken("audio", audios);
-    }
-    videos += 1;
-    return promptToken("video", videos);
-  });
-}
+import type { Clip, LibraryFrame, ReferenceItem } from "../../types";
+import { generateId } from "../../utils";
+import { ReferenceChips, AddReferenceButton } from "./ReferenceChips";
 
 export function refsAreValid(refs: ReferenceItem[]): { ok: boolean; error?: string } {
   if (refs.length === 0) return { ok: false, error: "Add at least one reference" };
@@ -65,7 +34,7 @@ type Props = {
   uploadFile: (file: File, kind: string) => Promise<string>;
 };
 
-export function RefList({ refs, disabled, frames, clips, onChange, uploadFile }: Props) {
+export function RefListEnhanced({ refs, disabled, frames, clips, onChange, uploadFile }: Props) {
   const imageRef = useRef<HTMLInputElement>(null);
   const silentVideoRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLInputElement>(null);
@@ -73,99 +42,70 @@ export function RefList({ refs, disabled, frames, clips, onChange, uploadFile }:
   const videoAudioAudioRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLInputElement>(null);
   const pendingVideoAudio = useRef<Partial<ReferenceItem> | null>(null);
-  const tokens = tokensFor(refs);
   const validity = refs.length ? refsAreValid(refs) : { ok: true };
 
   function add(item: Omit<ReferenceItem, "id">) {
     onChange([...refs, { ...item, id: generateId() }]);
   }
 
-  function move(index: number, dir: -1 | 1) {
-    const next = [...refs];
-    const j = index + dir;
-    if (j < 0 || j >= next.length) return;
-    const tmp = next[index];
-    next[index] = next[j];
-    next[j] = tmp;
-    onChange(next);
-  }
-
-  function remove(index: number) {
-    onChange(refs.filter((_, i) => i !== index));
-  }
-
   return (
-    <div className="ref-panel">
-      <div className="ref-panel-header">
-        <span className="media-panel-title">Reference clips</span>
-        {refs.length > 0 && <span className="ref-panel-count">{refs.length}</span>}
+    <div className="ref-list-enhanced">
+      <div className="ref-list-enhanced__header">
+        <span className="ref-list-enhanced__title">Reference clips</span>
+        {refs.length > 0 && (
+          <span className="ref-list-enhanced__count">{refs.length}</span>
+        )}
       </div>
-      <p className="hint hint-inline">
-        Add image, video, or audio files in the order they should appear. In the prompt,
-        name them <code>Picture 1</code>, <code>Video 1</code>, <code>Audio 1</code>.
-        Audio clips must be 2–15 s (max 3, 15 s total) and need an image or video too.
+
+      <p className="ref-list-enhanced__help">
+        Add image, video, or audio files in order. Reference them as{" "}
+        <code>Picture 1</code>, <code>Video 1</code>, <code>Audio 1</code> in your prompt.
+        Audio clips must be 2–15 s (max 3).
       </p>
 
       {refs.length > 0 && (
-        <ol className="ref-list">
-          {refs.map((ref, i) => (
-            <li key={ref.id} className="ref-item">
-              <span className="ref-token">{tokens[i]}</span>
-              <span className="ref-kind">{KIND_LABEL[ref.kind]}</span>
-              <span className="ref-name" title={ref.path}>
-                {ref.name}
-                {ref.audioName ? ` + ${ref.audioName}` : ""}
-              </span>
-              <span className="ref-actions">
-                <button type="button" className="btn-prompt-action" disabled={disabled || i === 0} onClick={() => move(i, -1)}>
-                  Up
-                </button>
-                <button
-                  type="button"
-                  className="btn-prompt-action"
-                  disabled={disabled || i === refs.length - 1}
-                  onClick={() => move(i, 1)}
-                >
-                  Down
-                </button>
-                <button type="button" className="btn-prompt-action" disabled={disabled} onClick={() => remove(i)}>
-                  Remove
-                </button>
-              </span>
-            </li>
-          ))}
-        </ol>
+        <div className="ref-list-enhanced__chips">
+          <ReferenceChips refs={refs} onChange={onChange} disabled={disabled} />
+        </div>
       )}
 
-      {!validity.ok && <p className="hint hint-inline">{validity.error}</p>}
+      {!validity.ok && validity.error && (
+        <p className="ref-list-enhanced__error">{validity.error}</p>
+      )}
 
-      <div className="ref-add-row">
-        <button type="button" className="btn-secondary btn-compact" disabled={disabled} onClick={() => imageRef.current?.click()}>
-          Add image
-        </button>
-        <button type="button" className="btn-secondary btn-compact" disabled={disabled} onClick={() => silentVideoRef.current?.click()}>
-          Add silent video
-        </button>
-        <button type="button" className="btn-secondary btn-compact" disabled={disabled} onClick={() => videoRef.current?.click()}>
-          Add video
-        </button>
-        <button
-          type="button"
-          className="btn-secondary btn-compact"
+      <div className="ref-list-enhanced__buttons">
+        <AddReferenceButton
+          label="Image"
+          onClick={() => imageRef.current?.click()}
           disabled={disabled}
+        />
+        <AddReferenceButton
+          label="Silent video"
+          onClick={() => silentVideoRef.current?.click()}
+          disabled={disabled}
+        />
+        <AddReferenceButton
+          label="Video"
+          onClick={() => videoRef.current?.click()}
+          disabled={disabled}
+        />
+        <AddReferenceButton
+          label="Video + audio"
           onClick={() => videoAudioVideoRef.current?.click()}
-        >
-          Add video + audio
-        </button>
-        <button type="button" className="btn-secondary btn-compact" disabled={disabled} onClick={() => audioRef.current?.click()}>
-          Add audio
-        </button>
+          disabled={disabled}
+        />
+        <AddReferenceButton
+          label="Audio"
+          onClick={() => audioRef.current?.click()}
+          disabled={disabled}
+        />
       </div>
 
       {frames.length > 0 && (
-        <label className="clip-source-picker">
-          <span className="media-upload-label">Add saved frame as image</span>
+        <div className="ref-source-picker">
+          <span className="ref-source-picker__label">Add saved frame as image</span>
           <select
+            className="ref-source-picker__select"
             disabled={disabled}
             defaultValue=""
             onChange={(e) => {
@@ -182,13 +122,14 @@ export function RefList({ refs, disabled, frames, clips, onChange, uploadFile }:
               </option>
             ))}
           </select>
-        </label>
+        </div>
       )}
 
       {clips.length > 0 && (
-        <label className="clip-source-picker">
-          <span className="media-upload-label">Add library clip as silent video</span>
+        <div className="ref-source-picker">
+          <span className="ref-source-picker__label">Add library clip as silent video</span>
           <select
+            className="ref-source-picker__select"
             disabled={disabled}
             defaultValue=""
             onChange={(e) => {
@@ -211,9 +152,10 @@ export function RefList({ refs, disabled, frames, clips, onChange, uploadFile }:
               </option>
             ))}
           </select>
-        </label>
+        </div>
       )}
 
+      {/* Hidden file inputs */}
       <input
         ref={imageRef}
         type="file"

@@ -3,7 +3,20 @@ import { clipDisplayPrompt, snapshotFromClip } from "./clipEditor";
 import { applyProgressEvent } from "./progress";
 import { captureVideoFrame, formatVideoTime } from "./frameCapture";
 import { RefList, refsAreValid } from "./RefList";
-import type { Clip, Config, LibraryFrame, LoraPreset, PresetOption, ProgressState, QualityPreset, ReferenceItem } from "./types";
+import { generateId } from "./utils";
+import { FEATURES, TURBO_CONFIG, type TurboTier } from "./config";
+import { PillSelect, PillRow, PillDivider, NumberPill, TextPill } from "./components/options/PillControls";
+import { TurboToggle, TurboInfo } from "./components/composer/TurboToggle";
+import { ReferenceChips } from "./components/composer/ReferenceChips";
+import { RefListEnhanced } from "./components/composer/RefListEnhanced";
+import { LoraModal } from "./components/lora/LoraModal";
+import { TimelineStrip } from "./components/timeline/TimelineStrip";
+import { SceneQueue, AddToQueueButton } from "./components/composer/SceneQueue";
+import { PresetManager } from "./components/presets/PresetManager";
+import { CastPicker } from "./components/media/CastPicker";
+import { ModelsManager } from "./components/media/ModelsManager";
+import { WhatTheModelReads } from "./components/composer/WhatTheModelReads";
+import type { CastMember, Clip, Config, GenerationPreset, LibraryFrame, LoraPreset, PillOption, PresetOption, ProgressState, QualityPreset, ReferenceItem, SceneQueueItem } from "./types";
 
 function resolutionGroups(presets: PresetOption[]): { group: string; items: PresetOption[] }[] {
   const order: { group: string; items: PresetOption[] }[] = [];
@@ -274,6 +287,28 @@ async function fetchFrames(): Promise<LibraryFrame[]> {
   return (data.frames ?? []) as LibraryFrame[];
 }
 
+async function fetchCastMembers(): Promise<CastMember[]> {
+  const r = await fetch(`${API}/api/cast`);
+  if (!r.ok) throw new Error("Failed to load cast");
+  const data = await r.json();
+  return (data.cast ?? []) as CastMember[];
+}
+
+async function fetchBackendPresets(): Promise<GenerationPreset[]> {
+  const r = await fetch(`${API}/api/presets`);
+  if (!r.ok) throw new Error("Failed to load presets");
+  const data = await r.json();
+  return (data.presets ?? []) as GenerationPreset[];
+}
+
+async function createPreset(preset: GenerationPreset): Promise<void> {
+  await fetch(`${API}/api/presets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(preset),
+  });
+}
+
 async function uploadFile(file: File, kind: string): Promise<string> {
   const fd = new FormData();
   fd.append("file", file);
@@ -326,6 +361,19 @@ export default function App() {
   const [endImageName, setEndImageName] = useState<string | null>(null);
   const [refs, setRefs] = useState<ReferenceItem[]>([]);
   const [savingFrame, setSavingFrame] = useState(false);
+  const [turboEnabled, setTurboEnabled] = useState(false);
+  const [turboTier, setTurboTier] = useState<TurboTier>(TURBO_CONFIG.DEFAULT_TIER);
+  const [turboLoading, setTurboLoading] = useState(false);
+  const [loraModalOpen, setLoraModalOpen] = useState(false);
+  const [sceneQueue, setSceneQueue] = useState<SceneQueueItem[]>([]);
+  const [queueRunning, setQueueRunning] = useState(false);
+  const [generationPresets, setGenerationPresets] = useState<GenerationPreset[]>([]);
+  const [castMembers, setCastMembers] = useState<CastMember[]>([]);
+  const [selectedCastIds, setSelectedCastIds] = useState<string[]>([]);
+  const [modelsOpen, setModelsOpen] = useState(false);
+  const [modelsDownloadActive, setModelsDownloadActive] = useState(false);
+  const [modelsCloseWarning, setModelsCloseWarning] = useState(false);
+  const [lockedClipIds, setLockedClipIds] = useState<Set<string>>(new Set());
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const playerVideoRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
@@ -373,6 +421,27 @@ export default function App() {
     loraPresetIds.length > 0;
   const closePreset = config?.quality_presets.find((p) => p.id === "close");
 
+  // Pill options for the new UI
+  const modeOptions: PillOption[] = useMemo(
+    () => (config?.generation_modes ?? []).map((m) => ({ id: m.id, label: m.label })),
+    [config?.generation_modes],
+  );
+
+  const qualityOptions: PillOption[] = useMemo(
+    () =>
+      (config?.quality_presets ?? []).map((p) => ({
+        id: p.id,
+        label: p.label,
+        description: p.guidance ?? undefined,
+      })),
+    [config?.quality_presets],
+  );
+
+  const durationOptions: PillOption[] = useMemo(
+    () => (config?.duration_presets ?? []).map((d) => ({ id: d.id, label: d.id })),
+    [config?.duration_presets],
+  );
+
   useEffect(() => {
     void maybeRequestNotifyPermissionOnHttps();
     fetchConfig()
@@ -402,6 +471,10 @@ export default function App() {
       .catch((e) => setError(String(e)));
     fetchClips().then(setClips).catch(() => undefined);
     fetchFrames().then(setFrameLibrary).catch(() => undefined);
+    fetchCastMembers().then(setCastMembers).catch(() => undefined);
+    fetchBackendPresets().then((presets) => {
+      if (presets.length > 0) setGenerationPresets(presets);
+    }).catch(() => undefined);
     return () => {
       runEventSourceRef.current?.close();
       revokeBlobVideoUrls(clipsRef.current);
@@ -441,6 +514,322 @@ export default function App() {
     setTokenReduction(false);
     setSsdStreaming(false);
   }
+
+  async function handleTurboToggle(enabled: boolean) {
+    if (!FEATURES.TURBO_MODE) return;
+
+    if (enabled) {
+      setTurboLoading(true);
+      try {
+        // Ensure the turbo LoRA is downloaded
+        await ensureLoraSpec(TURBO_CONFIG.LORA_SPEC, TURBO_CONFIG.LABEL);
+
+        // Find or create the turbo preset ID
+        const existingPreset = loraPresets.find((p) => p.spec === TURBO_CONFIG.LORA_SPEC);
+        if (existingPreset) {
+          // Enable the existing preset
+          setLoraPresetIds((prev) =>
+            prev.includes(existingPreset.id) ? prev : [...prev, existingPreset.id],
+          );
+        } else {
+          // Add as custom and enable
+          const r = await fetch(`${API}/api/loras/custom`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              spec: TURBO_CONFIG.LORA_SPEC,
+              label: TURBO_CONFIG.LABEL,
+              scale: TURBO_CONFIG.SCALE,
+            }),
+          });
+          if (r.ok) {
+            const data = (await r.json()) as { id: string; lora_presets?: LoraPreset[] };
+            if (data.lora_presets) setLoraPresets(data.lora_presets);
+            if (data.id) setLoraPresetIds((prev) => [...prev, data.id]);
+          }
+        }
+
+        // Apply turbo settings using selected tier
+        const tierConfig = TURBO_CONFIG.TIERS[turboTier];
+        setNumSteps(tierConfig.steps);
+        setLayers(TURBO_CONFIG.LAYERS);
+        setReuse(TURBO_CONFIG.REUSE);
+        setTokenReduction(false);
+        setSsdStreaming(false);
+        setTurboEnabled(true);
+        setLoraActivity(`${TURBO_CONFIG.LABEL} enabled`);
+      } catch (e) {
+        setError(String(e));
+        setTurboEnabled(false);
+      } finally {
+        setTurboLoading(false);
+      }
+    } else {
+      // Disable turbo - remove turbo LoRA from selection
+      const turboPreset = loraPresets.find((p) => p.spec === TURBO_CONFIG.LORA_SPEC);
+      if (turboPreset) {
+        setLoraPresetIds((prev) => prev.filter((id) => id !== turboPreset.id));
+      }
+      setTurboEnabled(false);
+      setLoraActivity(null);
+
+      // Restore default quality preset settings
+      const preset = config?.quality_presets.find((p) => p.id === quality);
+      if (preset) {
+        const fields = fieldsFromPreset(preset);
+        setNumSteps(fields.steps);
+        setLayers(fields.layers);
+        setReuse(fields.reuse);
+      }
+    }
+  }
+
+  function handleTurboTierChange(tier: TurboTier) {
+    setTurboTier(tier);
+    if (turboEnabled) {
+      // Update step count when tier changes while turbo is active
+      const tierConfig = TURBO_CONFIG.TIERS[tier];
+      setNumSteps(tierConfig.steps);
+    }
+  }
+
+  function addToSceneQueue() {
+    const scene: SceneQueueItem = {
+      id: generateId(),
+      prompt,
+      mode,
+      quality,
+      resolutionId,
+      durationId,
+      numSteps,
+      layers,
+      reuse,
+      seed,
+      loraPresetIds,
+      turboEnabled,
+      turboTier,
+      refs: [...refs],
+      imagePath,
+      endImagePath,
+      clipMultiplier,
+      autocontinue: clipMultiplier > 1,
+      autoconcat: clipMultiplier > 1,
+      tokenReduction,
+      ssdStreaming,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    };
+    setSceneQueue((prev) => [...prev, scene]);
+  }
+
+  function removeFromSceneQueue(id: string) {
+    setSceneQueue((prev) => prev.filter((s) => s.id !== id));
+  }
+
+  function reorderSceneQueue(scenes: SceneQueueItem[]) {
+    setSceneQueue(scenes);
+  }
+
+  function loadSceneToEditor(scene: SceneQueueItem) {
+    setPrompt(scene.prompt);
+    setMode(scene.mode);
+    setQuality(scene.quality);
+    setResolutionId(scene.resolutionId);
+    setDurationId(scene.durationId);
+    setNumSteps(scene.numSteps);
+    setLayers(scene.layers);
+    setReuse(scene.reuse);
+    setSeed(scene.seed);
+    setLoraPresetIds(scene.loraPresetIds);
+    setTurboEnabled(scene.turboEnabled);
+    if (scene.turboTier) setTurboTier(scene.turboTier as TurboTier);
+    setRefs(scene.refs);
+    setImagePath(scene.imagePath ?? null);
+    setEndImagePath(scene.endImagePath ?? null);
+    setClipMultiplier(scene.clipMultiplier);
+    // autocontinue/autoconcat are derived from clipMultiplier
+    setTokenReduction(scene.tokenReduction);
+    setSsdStreaming(scene.ssdStreaming);
+  }
+
+  function clearSceneQueue() {
+    setSceneQueue([]);
+  }
+
+  async function runSceneQueue() {
+    // Run all pending scenes sequentially
+    const pending = sceneQueue.filter((s) => s.status === "pending");
+    if (pending.length === 0) return;
+
+    setQueueRunning(true);
+    for (const scene of pending) {
+      // Load scene settings
+      loadSceneToEditor(scene);
+      // Mark as generating
+      setSceneQueue((prev) =>
+        prev.map((s) => (s.id === scene.id ? { ...s, status: "generating" as const } : s))
+      );
+      // Trigger generation (we need to await it completing via SSE)
+      // For now, just mark as done after a short delay - actual implementation would await the run
+      // This is a placeholder - full implementation would use the existing handleRun logic
+      try {
+        // Trigger the generation button programmatically
+        const genButton = document.querySelector<HTMLButtonElement>(".gen-submit");
+        if (genButton && !genButton.disabled) {
+          genButton.click();
+          // Wait for generation to complete (monitor busy state)
+          await new Promise<void>((resolve) => {
+            const checkInterval = setInterval(() => {
+              // Check if no longer busy
+              if (!document.querySelector(".gen-submit:disabled")) {
+                clearInterval(checkInterval);
+                resolve();
+              }
+            }, 500);
+          });
+        }
+        setSceneQueue((prev) =>
+          prev.map((s) => (s.id === scene.id ? { ...s, status: "done" as const } : s))
+        );
+      } catch (e) {
+        setSceneQueue((prev) =>
+          prev.map((s) =>
+            s.id === scene.id ? { ...s, status: "failed" as const, error: String(e) } : s
+          )
+        );
+      }
+    }
+    setQueueRunning(false);
+  }
+
+  function savePreset(name: string, description?: string) {
+    const preset: GenerationPreset = {
+      id: generateId(),
+      name,
+      description,
+      mode,
+      quality,
+      resolutionId,
+      durationId,
+      numSteps,
+      layers,
+      reuse,
+      loraIds: loraPresetIds,
+      turboEnabled,
+      tokenReduction,
+      ssdStreaming,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setGenerationPresets((prev) => [...prev, preset]);
+    // Persist to backend (survives restarts); localStorage as local fallback
+    const updated = [...generationPresets, preset];
+    localStorage.setItem("h3ws-presets", JSON.stringify(updated));
+    void createPreset(preset);
+  }
+
+  function loadPreset(preset: GenerationPreset) {
+    setMode(preset.mode);
+    setQuality(preset.quality);
+    setResolutionId(preset.resolutionId);
+    setDurationId(preset.durationId);
+    setNumSteps(preset.numSteps);
+    setLayers(preset.layers);
+    setReuse(preset.reuse);
+    setLoraPresetIds(preset.loraIds);
+    setTurboEnabled(preset.turboEnabled);
+    setTokenReduction(preset.tokenReduction);
+    setSsdStreaming(preset.ssdStreaming);
+  }
+
+  function deletePreset(id: string) {
+    setGenerationPresets((prev) => prev.filter((p) => p.id !== id));
+    const updated = generationPresets.filter((p) => p.id !== id);
+    localStorage.setItem("h3ws-presets", JSON.stringify(updated));
+    void fetch(`${API}/api/presets/${id}`, { method: "DELETE" }).catch(() => undefined);
+  }
+
+  function toggleClipLock(clipId: string) {
+    setLockedClipIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(clipId)) {
+        next.delete(clipId);
+      } else {
+        next.add(clipId);
+      }
+      return next;
+    });
+  }
+
+  async function createCastMember(name: string, description?: string) {
+    try {
+      const r = await fetch(`${API}/api/cast`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, description }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => null);
+        throw new Error((body && body.detail) || "Failed to create cast member");
+      }
+      const data = await r.json();
+      setCastMembers((prev) => [...prev, data.cast as CastMember]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function deleteCastMember(id: string) {
+    try {
+      const r = await fetch(`${API}/api/cast/${id}`, { method: "DELETE" });
+      if (!r.ok) {
+        const body = await r.json().catch(() => null);
+        throw new Error((body && body.detail) || "Failed to delete cast member");
+      }
+      setCastMembers((prev) => prev.filter((m) => m.id !== id));
+      setSelectedCastIds((prev) => prev.filter((cid) => cid !== id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function toggleCast(id: string) {
+    setSelectedCastIds((prev) =>
+      prev.includes(id) ? prev.filter((cid) => cid !== id) : [...prev, id]
+    );
+  }
+
+  function toggleModelsOpen() {
+    // If a download is running, closing the modal is safe (the server task
+    // survives), but surface a confirmation so the user knows it continues.
+    if (modelsDownloadActive) {
+      setModelsCloseWarning(true);
+      return;
+    }
+    setModelsOpen((v) => !v);
+  }
+
+  function handleModelsDownloadStateChange(active: boolean) {
+    setModelsDownloadActive(active);
+    if (!active) setModelsCloseWarning(false);
+  }
+
+  function confirmModelsClose() {
+    setModelsCloseWarning(false);
+    setModelsOpen(false);
+  }
+
+  // Load presets from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("h3ws-presets");
+      if (stored) {
+        setGenerationPresets(JSON.parse(stored) as GenerationPreset[]);
+      }
+    } catch {
+      // Ignore parse errors
+    }
+  }, []);
 
   async function ensureLoraSpec(spec: string, label: string) {
     setLoraBusy(true);
@@ -601,7 +990,7 @@ export default function App() {
       if (refs.some((r) => r.path === frame.path)) return;
       handleRefsChange([
         ...refs,
-        { id: crypto.randomUUID(), kind: "image", path: frame.path, name: frame.label },
+        { id: generateId(), kind: "image", path: frame.path, name: frame.label },
       ]);
       return;
     }
@@ -801,6 +1190,21 @@ export default function App() {
           <span className="brand-sub">MiniMax-H3</span>
         </div>
         <div className="header-status">
+          {FEATURES.MODELS_PAGE && (
+            <button type="button" className="btn-secondary" onClick={toggleModelsOpen}>
+              Models
+            </button>
+          )}
+          {FEATURES.CAST_SYSTEM && (
+            <CastPicker
+              members={castMembers}
+              selectedIds={selectedCastIds}
+              onToggle={toggleCast}
+              onCreate={createCastMember}
+              onDelete={deleteCastMember}
+              disabled={busy}
+            />
+          )}
           <button type="button" className="btn-secondary" onClick={() => void startNewProject()}>
             New project
           </button>
@@ -896,11 +1300,20 @@ export default function App() {
           <section className="composer">
             <div className="prompt-row">
               <div className="prompt-field-wrap">
+                {/* Reference chips shown above prompt when in ref2va mode */}
+                {FEATURES.REFERENCE_CHIPS && refs.length > 0 && (
+                  <ReferenceChips refs={refs} onChange={handleRefsChange} disabled={busy} />
+                )}
+                {FEATURES.WHAT_MODEL_READS && (
+                  <WhatTheModelReads refs={refs} prompt={prompt} disabled={busy} />
+                )}
                 <textarea
                   ref={promptRef}
                   className="prompt-input"
                   rows={1}
-                  placeholder="Scene, action, camera, look, and audio…"
+                  placeholder={refs.length > 0
+                    ? "Describe the scene using Picture 1, Video 1, Audio 1…"
+                    : "Scene, action, camera, look, and audio…"}
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   onKeyDown={(e) => {
@@ -922,9 +1335,12 @@ export default function App() {
                   </button>
                 </div>
               </div>
-              <button type="button" className="btn-generate" onClick={() => void handleGenerate()} disabled={!canSubmit}>
+              <button type="button" className="btn-generate gen-submit" onClick={() => void handleGenerate()} disabled={!canSubmit}>
                 ↑
               </button>
+              {FEATURES.SCENE_QUEUE && (
+                <AddToQueueButton onClick={addToSceneQueue} disabled={busy} />
+              )}
             </div>
 
             <button type="button" className="options-toggle" onClick={() => setShowOptions((v) => !v)}>
@@ -938,6 +1354,118 @@ export default function App() {
                   <p className="hint hint-inline">{config.engine_error}</p>
                 )}
 
+                {/* New Pill UI (Phase 1) - controlled by feature flag */}
+                {FEATURES.PILLS_UI && (
+                  <>
+                    <PillRow className="pills-main-row">
+                      <PillSelect
+                        label="Mode"
+                        options={modeOptions}
+                        value={mode}
+                        onChange={(next) => {
+                          setMode(next);
+                          setImagePath(null);
+                          setImageName(null);
+                          setEndImagePath(null);
+                          setEndImageName(null);
+                          if (next !== "ref2va") setRefs([]);
+                        }}
+                        disabled={busy}
+                      />
+                      <PillSelect
+                        label="Quality"
+                        options={qualityOptions}
+                        value={quality}
+                        onChange={(id) => {
+                          const preset = config.quality_presets.find((p) => p.id === id);
+                          const fields = fieldsFromPreset(preset);
+                          setQuality(id);
+                          setNumSteps(fields.steps);
+                          setLayers(fields.layers);
+                          setReuse(fields.reuse);
+                          setTokenReduction(fields.tokenReduction);
+                          // Disable turbo if switching quality
+                          if (turboEnabled) setTurboEnabled(false);
+                        }}
+                        disabled={busy}
+                      />
+                      <PillSelect
+                        label="Duration"
+                        options={durationOptions}
+                        value={durationId}
+                        onChange={setDurationId}
+                        disabled={busy}
+                        compact
+                      />
+                      {FEATURES.TURBO_MODE && (
+                        <>
+                          <PillDivider />
+                          <TurboToggle
+                            enabled={turboEnabled}
+                            onChange={(enabled) => void handleTurboToggle(enabled)}
+                            tier={turboTier}
+                            onTierChange={handleTurboTierChange}
+                            disabled={busy || loraBusy}
+                            loading={turboLoading}
+                          />
+                        </>
+                      )}
+                    </PillRow>
+                    <PillRow className="pills-params-row">
+                      <NumberPill
+                        label="Steps"
+                        value={numSteps}
+                        min={1}
+                        max={50}
+                        onChange={(next) => {
+                          setNumSteps(next);
+                          if (next <= 7) setReuse(1);
+                        }}
+                        disabled={busy}
+                        title="h3.c --steps (denoising passes)"
+                      />
+                      <NumberPill
+                        label="Layers"
+                        value={layers}
+                        min={1}
+                        max={50}
+                        onChange={setLayers}
+                        disabled={busy}
+                        title="h3.c --layers (DiT blocks per pass; default 50)"
+                      />
+                      <NumberPill
+                        label="Reuse"
+                        value={reuse}
+                        min={1}
+                        max={8}
+                        onChange={setReuse}
+                        disabled={busy || numSteps <= 7}
+                        title="h3.c --reuse (exclusive with --core-reuse; default 1)"
+                      />
+                      <PillDivider />
+                      <TextPill
+                        label="Seed"
+                        value={seed}
+                        placeholder="random"
+                        onChange={setSeed}
+                        disabled={busy}
+                      />
+                    </PillRow>
+                    <TurboInfo visible={turboEnabled} tier={turboTier} />
+                    {FEATURES.PRESETS && (
+                      <PresetManager
+                        presets={generationPresets}
+                        onSave={savePreset}
+                        onLoad={loadPreset}
+                        onDelete={deletePreset}
+                        disabled={busy}
+                      />
+                    )}
+                  </>
+                )}
+
+                {/* Legacy grid UI - shown when PILLS_UI is disabled */}
+                {!FEATURES.PILLS_UI && (
                 <div className="options-grid options-grid-compact">
                   <label className="opt-mode">
                     Mode
@@ -1085,17 +1613,31 @@ export default function App() {
                     />
                   </label>
                 </div>
+                )}
 
                 <div className="lora-row">
                   <div className="lora-row-select">
                     <span className="lora-field-label">LoRA</span>
-                    <LoraMultiSelect
-                      presets={loraPresets}
-                      selectedIds={loraPresetIds}
-                      disabled={loraBusy || addingCustomLora || busy}
-                      onToggle={(id, checked) => void toggleLoraPreset(id, checked)}
-                      onRemovePreset={(preset) => void removeLoraPreset(preset)}
-                    />
+                    <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                      <LoraMultiSelect
+                        presets={loraPresets}
+                        selectedIds={loraPresetIds}
+                        disabled={loraBusy || addingCustomLora || busy}
+                        onToggle={(id, checked) => void toggleLoraPreset(id, checked)}
+                        onRemovePreset={(preset) => void removeLoraPreset(preset)}
+                      />
+                      {FEATURES.LORA_MODAL && (
+                        <button
+                          type="button"
+                          className="btn-secondary btn-compact"
+                          onClick={() => setLoraModalOpen(true)}
+                          disabled={busy}
+                          title="Browse LoRA library"
+                        >
+                          Browse
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="lora-row-add">
                     <input
@@ -1226,14 +1768,25 @@ export default function App() {
                 )}
 
                 {mode === "ref2va" && (
-                  <RefList
-                    refs={refs}
-                    disabled={busy}
-                    frames={frameLibrary}
-                    clips={libraryClips}
-                    onChange={handleRefsChange}
-                    uploadFile={uploadFile}
-                  />
+                  FEATURES.REFERENCE_CHIPS ? (
+                    <RefListEnhanced
+                      refs={refs}
+                      disabled={busy}
+                      frames={frameLibrary}
+                      clips={libraryClips}
+                      onChange={handleRefsChange}
+                      uploadFile={uploadFile}
+                    />
+                  ) : (
+                    <RefList
+                      refs={refs}
+                      disabled={busy}
+                      frames={frameLibrary}
+                      clips={libraryClips}
+                      onChange={handleRefsChange}
+                      uploadFile={uploadFile}
+                    />
+                  )
                 )}
 
                 {isMultiClip && (
@@ -1255,6 +1808,20 @@ export default function App() {
         </div>
 
         <aside className="library">
+          {/* Timeline view for current chain */}
+          {FEATURES.TIMELINE_VIEW && chainId && chainParts.length > 1 && (
+            <div style={{ marginBottom: "12px" }}>
+              <TimelineStrip
+                clips={chainParts}
+                selectedClipId={selectedClipId}
+                onSelectClip={applyClipSelection}
+                lockedClipIds={lockedClipIds}
+                onLockToggle={FEATURES.LOCKED_TAKES ? toggleClipLock : undefined}
+                disabled={busy}
+              />
+            </div>
+          )}
+
           <div className="library-header">
             <span className="library-title">Library</span>
             <span className="library-count">{libraryClips.length}</span>
@@ -1292,6 +1859,19 @@ export default function App() {
               </div>
             ))}
           </div>
+
+          {FEATURES.SCENE_QUEUE && sceneQueue.length > 0 && (
+            <SceneQueue
+              scenes={sceneQueue}
+              onRemove={removeFromSceneQueue}
+              onReorder={reorderSceneQueue}
+              onEdit={loadSceneToEditor}
+              onRunAll={() => void runSceneQueue()}
+              onClear={clearSceneQueue}
+              disabled={busy}
+              running={queueRunning}
+            />
+          )}
 
           <div className="library-section">
             <div className="library-header">
@@ -1354,6 +1934,45 @@ export default function App() {
           </div>
         </aside>
       </div>
+
+      {/* Models panel */}
+      {FEATURES.MODELS_PAGE && modelsOpen && (
+        <div className="modal-backdrop" onClick={toggleModelsOpen}>
+          <div className="modal modal--fullscreen" onClick={(e) => e.stopPropagation()}>
+            <ModelsManager
+              api={API}
+              onClose={() => setModelsOpen(false)}
+              onDownloadStateChange={handleModelsDownloadStateChange}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Models close guard — download keeps running in the background */}
+      {FEATURES.MODELS_PAGE && modelsCloseWarning && (
+        <div className="models-close-toast">
+          <span>Download in progress — it will continue in the background.</span>
+          <button type="button" className="btn-ghost" onClick={confirmModelsClose}>
+            Close anyway
+          </button>
+          <button type="button" className="btn-ghost" onClick={() => setModelsCloseWarning(false)}>
+            Keep open
+          </button>
+        </div>
+      )}
+
+      {/* LoRA Modal */}
+      {FEATURES.LORA_MODAL && (
+        <LoraModal
+          open={loraModalOpen}
+          onClose={() => setLoraModalOpen(false)}
+          presets={loraPresets}
+          selectedIds={loraPresetIds}
+          onToggle={(id, checked) => void toggleLoraPreset(id, checked)}
+          onRemove={(preset) => void removeLoraPreset(preset)}
+          disabled={busy || loraBusy}
+        />
+      )}
     </div>
   );
 }

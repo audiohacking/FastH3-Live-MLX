@@ -143,3 +143,160 @@ export interface ProgressState {
   pct?: number;
   eta_s?: number;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cast System Types (Phase 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface CastMember {
+  id: string;
+  name: string;
+  description?: string;
+  media: CastMedia[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CastMedia {
+  id: string;
+  type: "image" | "video";
+  path: string;
+  thumbnailUrl?: string;
+  label?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Preset System Types (Phase 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface GenerationPreset {
+  id: string;
+  name: string;
+  description?: string;
+  mode: string;
+  quality: string;
+  resolutionId: string;
+  durationId: string;
+  numSteps: number;
+  layers: number;
+  reuse: number;
+  loraIds: string[];
+  turboEnabled: boolean;
+  tokenReduction: boolean;
+  ssdStreaming: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Timeline Types (Phase 3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface TimelineClip {
+  id: string;
+  clipId: string;
+  chainId: string;
+  index: number;
+  thumbnailUrl?: string;
+  durationMs: number;
+  prompt: string;
+  status: "pending" | "generating" | "done" | "failed";
+}
+
+export interface TimelineSeam {
+  id: string;
+  beforeClipId: string;
+  afterClipId: string;
+  transitionType: "cut" | "blend";
+  blendDurationMs?: number;
+}
+
+export interface Timeline {
+  id: string;
+  chainId: string;
+  clips: TimelineClip[];
+  seams: TimelineSeam[];
+  totalDurationMs: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reference Scope Types (Phase 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ScopeType = "face" | "object" | "scene" | "style";
+
+export interface ReferenceScope {
+  face: number;    // 0-1 contribution
+  object: number;
+  scene: number;
+  style: number;
+}
+
+export interface ScopedReference extends ReferenceItem {
+  scope?: ReferenceScope;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Turbo Mode Types (Phase 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface TurboState {
+  enabled: boolean;
+  loraSpec: string;
+  steps: number;
+  layers: number;
+  reuse: number;
+  scale: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pill Control Types (Phase 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PillOption<T = string> {
+  id: T;
+  label: string;
+  shortLabel?: string;
+  description?: string;
+  disabled?: boolean;
+}
+
+export interface PillGroup<T = string> {
+  id: string;
+  label: string;
+  options: PillOption<T>[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scene Queue Types (Phase 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type SceneStatus = "pending" | "generating" | "done" | "failed" | "cancelled";
+
+export interface SceneQueueItem {
+  id: string;
+  prompt: string;
+  mode: string;
+  quality: string;
+  resolutionId: string;
+  durationId: string;
+  numSteps: number;
+  layers: number;
+  reuse: number;
+  seed: string;
+  loraPresetIds: string[];
+  turboEnabled: boolean;
+  turboTier?: string;
+  refs: ReferenceItem[];
+  imagePath?: string | null;
+  endImagePath?: string | null;
+  clipMultiplier: number;
+  autocontinue: boolean;
+  autoconcat: boolean;
+  tokenReduction: boolean;
+  ssdStreaming: boolean;
+  status: SceneStatus;
+  runId?: string;
+  error?: string;
+  createdAt: string;
+}
