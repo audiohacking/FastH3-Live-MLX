@@ -9,6 +9,8 @@ interface LoraModalProps {
   selectedIds: string[];
   onToggle: (id: string, selected: boolean) => void;
   onRemove: (preset: LoraPreset) => void;
+  onAddCustom?: (spec: string, label: string, scale: number) => Promise<void>;
+  addingCustom?: boolean;
   disabled?: boolean;
 }
 
@@ -19,9 +21,14 @@ export function LoraModal({
   selectedIds,
   onToggle,
   onRemove,
+  onAddCustom,
+  addingCustom,
   disabled,
 }: LoraModalProps) {
   const [search, setSearch] = useState("");
+  const [customSpec, setCustomSpec] = useState("");
+  const [customLabel, setCustomLabel] = useState("");
+  const [customScale, setCustomScale] = useState("0.8");
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Focus search input when modal opens
@@ -154,7 +161,50 @@ export function LoraModal({
           )}
         </div>
 
-        <footer className="modal__footer">
+        <footer className="modal__footer" style={{ flexWrap: "wrap", gap: 8 }}>
+          {onAddCustom && (
+            <form
+              className="lora-row-add"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!customSpec.trim() || addingCustom) return;
+                void onAddCustom(customSpec.trim(), customLabel.trim(), Number(customScale) || 0.8).then(() => {
+                  setCustomSpec("");
+                  setCustomLabel("");
+                });
+              }}
+            >
+              <input
+                type="text"
+                className="lora-add-url"
+                placeholder="HF URL or path"
+                value={customSpec}
+                disabled={addingCustom || disabled}
+                onChange={(e) => setCustomSpec(e.target.value)}
+              />
+              <input
+                type="text"
+                className="lora-add-name"
+                placeholder="Label"
+                value={customLabel}
+                disabled={addingCustom || disabled}
+                onChange={(e) => setCustomLabel(e.target.value)}
+              />
+              <input
+                type="number"
+                className="lora-add-scale"
+                min={0}
+                max={2}
+                step={0.05}
+                value={customScale}
+                disabled={addingCustom || disabled}
+                onChange={(e) => setCustomScale(e.target.value)}
+              />
+              <button type="submit" className="btn-secondary btn-compact" disabled={!customSpec.trim() || addingCustom}>
+                {addingCustom ? "…" : "Add"}
+              </button>
+            </form>
+          )}
           <span className="lora-modal__count">
             {selectedIds.length} selected
           </span>

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { CastMember } from "../../types";
+import { useRef, useState } from "react";
+import type { CastMediaType, CastMember } from "../../types";
 
 interface CastPickerProps {
   members: CastMember[];
@@ -7,26 +7,27 @@ interface CastPickerProps {
   onToggle: (id: string) => void;
   onCreate: (name: string, description?: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onAttachMedia?: (id: string, file: File, type: CastMediaType) => Promise<void>;
+  onRemoveMedia?: (id: string, mediaId: string) => Promise<void>;
   disabled?: boolean;
 }
 
-/**
- * Named-character cast browser. Lets the user pick cast members whose
- * attached reference media should be injected into the generation, and
- * create/delete cast members. Wired to the persistent /api/cast endpoints.
- */
 export function CastPicker({
   members,
   selectedIds,
   onToggle,
   onCreate,
   onDelete,
+  onAttachMedia,
+  onRemoveMedia,
   disabled,
 }: CastPickerProps) {
   const [expanded, setExpanded] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
+  const [attachFor, setAttachFor] = useState<{ id: string; type: CastMediaType } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   async function handleCreate() {
     if (!name.trim()) return;
@@ -45,12 +46,13 @@ export function CastPicker({
 
   return (
     <div className="cast-picker">
-      <button type="button" className="cast-picker__toggle" onClick={() => setExpanded((v) => !v)} disabled={disabled}>
+      <button type="button" className="cast-picker__toggle rail-btn" onClick={() => setExpanded((v) => !v)} disabled={disabled}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <circle cx="12" cy="8" r="3" />
+          <path d="M5 19c0-3.3 3.1-6 7-6s7 2.7 7 6" />
+        </svg>
         Cast
         {selectedIds.length > 0 && <span className="cast-picker__count">{selectedIds.length}</span>}
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`cast-picker__icon ${expanded ? "cast-picker__icon--open" : ""}`}>
-          <path d="M19 9l-7 7-7-7" />
-        </svg>
       </button>
 
       {expanded && (
@@ -76,9 +78,60 @@ export function CastPicker({
                       <span className="cast-row__name">{m.name}</span>
                       {m.description && <span className="cast-row__desc">{m.description}</span>}
                       {m.media.length > 0 && (
-                        <span className="cast-row__meta">{m.media.length} media item{m.media.length === 1 ? "" : "s"}</span>
+                        <span className="cast-row__meta">
+                          {m.media.length} media · @{m.name.replace(/\s+/g, "")}
+                        </span>
+                      )}
+                      {m.media.length > 0 && onRemoveMedia && (
+                        <span className="cast-row__meta">
+                          {m.media.map((media) => (
+                            <button
+                              key={media.id}
+                              type="button"
+                              className="cast-row__delete"
+                              title={`Remove ${media.label || media.type}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void onRemoveMedia(m.id, media.id);
+                              }}
+                            >
+                              {media.type} ×
+                            </button>
+                          ))}
+                        </span>
                       )}
                     </div>
+                    {onAttachMedia && (
+                      <div className="cast-row__attach" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAttachFor({ id: m.id, type: "image" });
+                            fileRef.current?.click();
+                          }}
+                        >
+                          + img
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAttachFor({ id: m.id, type: "video" });
+                            fileRef.current?.click();
+                          }}
+                        >
+                          + vid
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAttachFor({ id: m.id, type: "audio" });
+                            fileRef.current?.click();
+                          }}
+                        >
+                          + aud
+                        </button>
+                      </div>
+                    )}
                     <button type="button" className="cast-row__delete" onClick={(e) => void handleDelete(e, m.id)} title="Delete">
                       &times;
                     </button>
@@ -121,6 +174,19 @@ export function CastPicker({
           )}
         </div>
       )}
+      <input
+        ref={fileRef}
+        type="file"
+        hidden
+        accept={attachFor?.type === "video" ? "video/*" : attachFor?.type === "audio" ? "audio/*" : "image/*"}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          const target = attachFor;
+          setAttachFor(null);
+          if (f && target && onAttachMedia) void onAttachMedia(target.id, f, target.type);
+        }}
+      />
     </div>
   );
 }

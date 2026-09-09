@@ -3,6 +3,7 @@
  * ───────────────────────────────────────────────────────────────────────────── */
 
 .preset-manager {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -53,13 +54,43 @@
 }
 
 .preset-manager__panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: var(--z-dropdown);
+  width: min(360px, 92vw);
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  gap: 8px;
+  padding: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+}
+
+.preset-manager__tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.preset-manager__tab {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.preset-manager__tab.is-on {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-dark);
 }
 
 .preset-manager__empty {

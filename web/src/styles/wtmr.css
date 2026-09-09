@@ -1,14 +1,11 @@
-/* "What the model reads" panel — Continuity-style reference elaboration */
+/* Compact Continuity-style disclosure under the prompt */
 
 .wtmr {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin: 6px 2px 4px;
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.2));
-  border-radius: var(--radius-sm, 6px);
-  background: transparent;
-  padding: 4px 8px 6px;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
 }
 
 .wtmr--disabled {
@@ -16,25 +13,54 @@
   pointer-events: none;
 }
 
-.wtmr__header {
-  display: flex;
+.wtmr__toggle {
+  display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 
-.wtmr__label {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--muted, #9aa0aa);
+.wtmr__toggle:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+.wtmr__chevron {
+  display: inline-block;
+  width: 10px;
+  font-size: 0.65rem;
+  line-height: 1;
+  transform: rotate(0deg);
+}
+
+.wtmr__toggle.is-open .wtmr__chevron {
+  transform: rotate(90deg);
+}
+
+.wtmr__count {
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-dark);
+  font-size: 0.6rem;
+  line-height: 14px;
+  text-align: center;
 }
 
 .wtmr__none {
-  font-size: 12px;
+  margin: 0;
+  font-size: 0.75rem;
   font-style: italic;
-  color: var(--muted, #9aa0aa);
+  color: var(--color-muted);
 }
 
 .wtmr__tokens {
@@ -67,28 +93,12 @@
   white-space: nowrap;
 }
 
-.wtmr__toggle {
-  margin-left: auto;
-  padding: 2px 8px;
-  font-size: 12px;
-  font-weight: 500;
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted, #9aa0aa);
-  cursor: pointer;
-}
-
-.wtmr__toggle:hover:not(:disabled) {
-  background: rgba(106, 176, 255, 0.12);
-}
-
 .wtmr__body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  border-top: 1px solid var(--border, rgba(128, 128, 128, 0.18));
-  padding-top: 10px;
+  gap: 8px;
+  width: 100%;
+  padding-top: 4px;
 }
 
 .wtmr__body section {
@@ -103,14 +113,14 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--muted, #9aa0aa);
+  color: var(--color-muted);
 }
 
 .wtmr__body p {
   margin: 0;
   font-size: 12.5px;
   line-height: 1.5;
-  color: var(--text, #e6e8eb);
+  color: var(--color-text);
 }
 
 .wtmr__pre {
@@ -119,8 +129,8 @@
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--text, #e6e8eb);
-  background: rgba(0, 0, 0, 0.22);
+  color: var(--color-text);
+  background: var(--color-bg);
   border-radius: 6px;
   padding: 8px 10px;
 }

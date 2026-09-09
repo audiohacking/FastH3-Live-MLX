@@ -1,5 +1,7 @@
 import { useState } from "react";
 import type { GenerationPreset } from "../../types";
+import type { StyleEntry } from "../../styleAtlas";
+import { StyleAtlas } from "../media/StyleAtlas";
 
 interface PresetManagerProps {
   presets: GenerationPreset[];
@@ -7,6 +9,8 @@ interface PresetManagerProps {
   onLoad: (preset: GenerationPreset) => void;
   onDelete: (id: string) => void;
   disabled?: boolean;
+  activeStyleId?: string | null;
+  onApplyStyle: (style: StyleEntry) => void;
 }
 
 export function PresetManager({
@@ -15,8 +19,11 @@ export function PresetManager({
   onLoad,
   onDelete,
   disabled,
+  activeStyleId,
+  onApplyStyle,
 }: PresetManagerProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [tab, setTab] = useState<"looks" | "saved">("looks");
   const [showSaveForm, setShowSaveForm] = useState(false);
   const [saveName, setSaveName] = useState("");
   const [saveDescription, setSaveDescription] = useState("");
@@ -61,13 +68,38 @@ export function PresetManager({
 
       {isExpanded && (
         <div className="preset-manager__panel">
-          {presets.length === 0 && !showSaveForm && (
+          <div className="preset-manager__tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "looks"}
+              className={`preset-manager__tab${tab === "looks" ? " is-on" : ""}`}
+              onClick={() => setTab("looks")}
+            >
+              Looks
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "saved"}
+              className={`preset-manager__tab${tab === "saved" ? " is-on" : ""}`}
+              onClick={() => setTab("saved")}
+            >
+              Saved
+            </button>
+          </div>
+
+          {tab === "looks" && (
+            <StyleAtlas disabled={disabled} activeId={activeStyleId} onApply={onApplyStyle} />
+          )}
+
+          {tab === "saved" && presets.length === 0 && !showSaveForm && (
             <p className="preset-manager__empty">
               No saved presets. Save your current settings to reuse them later.
             </p>
           )}
 
-          {presets.length > 0 && (
+          {tab === "saved" && presets.length > 0 && (
             <div className="preset-manager__list">
               {presets.map((preset) => (
                 <div
@@ -103,7 +135,7 @@ export function PresetManager({
             </div>
           )}
 
-          {showSaveForm ? (
+          {tab === "saved" && (showSaveForm ? (
             <div className="preset-save-form">
               <input
                 type="text"
@@ -151,7 +183,7 @@ export function PresetManager({
             >
               + Save Current Settings
             </button>
-          )}
+          ))}
         </div>
       )}
     </div>

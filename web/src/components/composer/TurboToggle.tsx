@@ -20,39 +20,32 @@ export function TurboToggle({
   const tiers = Object.entries(TURBO_CONFIG.TIERS) as [TurboTier, typeof TURBO_CONFIG.TIERS[TurboTier]][];
 
   return (
-    <div className="turbo-control">
+    <div className="turbo-group">
       <button
         type="button"
-        className={`turbo-toggle${enabled ? " turbo-toggle--active" : ""}${loading ? " turbo-toggle--loading" : ""}`}
+        className={`chip-btn chip-btn--turbo${enabled ? " is-on" : ""}${loading ? " is-busy" : ""}`}
         disabled={disabled || loading}
         onClick={() => onChange(!enabled)}
         title={TURBO_CONFIG.GUIDANCE}
         aria-pressed={enabled}
       >
-        <span className="turbo-toggle__icon" aria-hidden>
-          {loading ? (
-            <span className="turbo-toggle__spinner" />
-          ) : (
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-            </svg>
-          )}
-        </span>
-        <span className="turbo-toggle__label">
-          {loading ? "Loading…" : enabled ? "Turbo ON" : "Turbo"}
-        </span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+        </svg>
+        {loading ? "Loading…" : enabled ? "turbo" : "turbo off"}
       </button>
-
       {enabled && !loading && (
-        <div className="turbo-tiers">
+        <div className="seg" role="radiogroup" aria-label="Turbo quality">
           {tiers.map(([key, config]) => (
             <button
               key={key}
               type="button"
-              className={`turbo-tier${tier === key ? " turbo-tier--active" : ""}`}
-              onClick={() => onTierChange(key)}
+              role="radio"
+              aria-checked={tier === key}
+              className={`seg__btn${tier === key ? " is-on" : ""}`}
               disabled={disabled}
               title={config.description}
+              onClick={() => onTierChange(key)}
             >
               {config.label}
             </button>
@@ -62,4 +55,3 @@ export function TurboToggle({
     </div>
   );
 }
-

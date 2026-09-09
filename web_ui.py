@@ -50,7 +50,9 @@ from h3_media import (
     concat_mp4s,
     extract_last_frame,
     media_available,
+    probe_duration_seconds,
     require_ui_canvas,
+    resize_still_to_canvas,
     sanitize_filename,
     seconds_to_frames,
     snap_frames,
@@ -537,7 +539,7 @@ def _upload_extension(kind: str, filename: str | None) -> str:
 
 async def _save_upload_file(
     request: Request, upload_dir: Path, *, kind: str = "image"
-) -> dict[str, str]:
+) -> dict[str, Any]:
     form = await request.form()
     upload_file = form.get("file")
     if upload_file is None:
@@ -550,7 +552,12 @@ async def _save_upload_file(
     dest = upload_dir / f"{uuid.uuid4()}{ext}"
     content = await read()
     dest.write_bytes(content)
-    return {"path": str(dest), "filename": filename, "kind": kind}
+    payload: dict[str, Any] = {"path": str(dest), "filename": filename, "kind": kind}
+    if kind in ("audio", "video"):
+        duration = probe_duration_seconds(dest)
+        if duration is not None:
+            payload["duration_s"] = duration
+    return payload
 
 
 def _clip_settings_from_body(body: dict[str, Any]) -> dict[str, Any]:
@@ -1488,12 +1495,25 @@ def create_app(
             ui_mode = "ref2va"
             body = dict(body)
             body["mode"] = "ref2va"
+            width = int(body.get("width") or 512)
+            height = int(body.get("height") or 512)
+            match_dir = state.upload_dir / "match"
+            for item in refs:
+                if item.kind != "image" or (item.ref_size or "max") != "match":
+                    continue
+                dest = match_dir / f"{uuid.uuid4().hex[:8]}.png"
+                try:
+                    resize_still_to_canvas(item.path, dest, width, height)
+                    item.path = dest
+                except Exception:
+                    log.exception("match-resize failed for %s", item.path)
             body["refs"] = [
                 {
                     "kind": item.kind,
                     "path": str(item.path),
                     "audio_path": str(item.audio_path) if item.audio_path else "",
                     "name": item.name,
+                    "ref_size": item.ref_size,
                 }
                 for item in refs
             ]
