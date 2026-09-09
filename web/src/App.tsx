@@ -6,7 +6,7 @@ import { RefList, refsAreValid } from "./RefList";
 import { generateId } from "./utils";
 import { FEATURES, TURBO_CONFIG, type TurboTier } from "./config";
 import { PillSelect, PillRow, PillDivider, NumberPill, TextPill } from "./components/options/PillControls";
-import { TurboToggle, TurboInfo } from "./components/composer/TurboToggle";
+import { TurboToggle } from "./components/composer/TurboToggle";
 import { ReferenceChips } from "./components/composer/ReferenceChips";
 import { RefListEnhanced } from "./components/composer/RefListEnhanced";
 import { LoraModal } from "./components/lora/LoraModal";
@@ -329,7 +329,7 @@ export default function App() {
   const [clips, setClips] = useState<Clip[]>([]);
   const [frameLibrary, setFrameLibrary] = useState<LibraryFrame[]>([]);
   const [prompt, setPrompt] = useState("");
-  const [mode, setMode] = useState("t2va");
+  const [mode, setMode] = useState("ref2va");
   const [quality, setQuality] = useState("fast");
   const [resolutionId, setResolutionId] = useState("512x512");
   const [durationId, setDurationId] = useState("1s");
@@ -799,14 +799,19 @@ export default function App() {
     );
   }
 
-  function toggleModelsOpen() {
-    // If a download is running, closing the modal is safe (the server task
-    // survives), but surface a confirmation so the user knows it continues.
+  // Header "Models" button: always opens. Never blocks re-opening.
+  function openModels() {
+    setModelsOpen(true);
+  }
+
+  // Backdrop click / close request: if a download is running, surface a
+  // confirmation (the server task survives), otherwise close.
+  function closeModels() {
     if (modelsDownloadActive) {
       setModelsCloseWarning(true);
       return;
     }
-    setModelsOpen((v) => !v);
+    setModelsOpen(false);
   }
 
   function handleModelsDownloadStateChange(active: boolean) {
@@ -1191,7 +1196,7 @@ export default function App() {
         </div>
         <div className="header-status">
           {FEATURES.MODELS_PAGE && (
-            <button type="button" className="btn-secondary" onClick={toggleModelsOpen}>
+            <button type="button" className="btn-secondary" onClick={openModels}>
               Models
             </button>
           )}
@@ -1304,9 +1309,6 @@ export default function App() {
                 {FEATURES.REFERENCE_CHIPS && refs.length > 0 && (
                   <ReferenceChips refs={refs} onChange={handleRefsChange} disabled={busy} />
                 )}
-                {FEATURES.WHAT_MODEL_READS && (
-                  <WhatTheModelReads refs={refs} prompt={prompt} disabled={busy} />
-                )}
                 <textarea
                   ref={promptRef}
                   className="prompt-input"
@@ -1334,6 +1336,10 @@ export default function App() {
                     Clear
                   </button>
                 </div>
+                {/* Model Reads shown below the prompt, kept compact */}
+                {FEATURES.WHAT_MODEL_READS && (
+                  <WhatTheModelReads refs={refs} prompt={prompt} disabled={busy} />
+                )}
               </div>
               <button type="button" className="btn-generate gen-submit" onClick={() => void handleGenerate()} disabled={!canSubmit}>
                 ↑
@@ -1451,7 +1457,6 @@ export default function App() {
                         disabled={busy}
                       />
                     </PillRow>
-                    <TurboInfo visible={turboEnabled} tier={turboTier} />
                     {FEATURES.PRESETS && (
                       <PresetManager
                         presets={generationPresets}
@@ -1937,11 +1942,11 @@ export default function App() {
 
       {/* Models panel */}
       {FEATURES.MODELS_PAGE && modelsOpen && (
-        <div className="modal-backdrop" onClick={toggleModelsOpen}>
+        <div className="modal-backdrop" onClick={closeModels}>
           <div className="modal modal--fullscreen" onClick={(e) => e.stopPropagation()}>
             <ModelsManager
               api={API}
-              onClose={() => setModelsOpen(false)}
+              onClose={closeModels}
               onDownloadStateChange={handleModelsDownloadStateChange}
             />
           </div>

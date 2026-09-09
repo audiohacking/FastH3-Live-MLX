@@ -301,30 +301,6 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * Turbo Info Banner
- * ───────────────────────────────────────────────────────────────────────────── */
-
-.turbo-info {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
-  background: var(--turbo-color-soft);
-  border: 1px solid var(--turbo-color);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-base);
-  color: var(--turbo-color-dark);
-}
-
-.turbo-info__icon {
-  flex-shrink: 0;
-}
-
-.turbo-info__text {
-  line-height: 1.4;
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
  * Turbo Control Container (toggle + tier selector)
  * ───────────────────────────────────────────────────────────────────────────── */
 

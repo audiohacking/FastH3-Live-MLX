@@ -236,6 +236,14 @@ def _decode_video_rgb_frames(
 
 
 def _decode_audio_f32le(path: str, *, rate: int, channels: int, max_seconds: float) -> bytes:
+    """Decode + resample audio to interleaved ``rate``/``channels`` float32.
+
+    Mirrors the ltx-ws decoder: flush the resampler tail with ``resample(None)``
+    so the full waveform is produced, then pad/truncate to an exact whole number
+    of frames. h3.c later checks ``received % frame_bytes == 0`` (2ch x 4B = 8),
+    so the returned byte length must always be an exact multiple of the frame
+    size — otherwise h3 fails with "could not decode a stereo soundtrack".
+    """
     import av
     import numpy as np
     from av.audio.resampler import AudioResampler
@@ -245,33 +253,48 @@ def _decode_audio_f32le(path: str, *, rate: int, channels: int, max_seconds: flo
         stream = next((s for s in container.streams if s.type == "audio"), None)
         if stream is None:
             _die(f"no audio stream in {path}")
+        # Use planar "fltp" (mirrors ltx-ws). For packed "flt" stereo,
+        # AVAudioFrame.to_ndarray() returns one interleaved plane (1, N)
+        # where N = samples*channels; reshaping that treats each interleaved
+        # element as a sample, corrupting the frame count. Planar gives a clean
+        # (channels, samples) array, so we can upmix mono and interleave exactly.
         layout = "stereo" if channels == 2 else "mono"
-        resampler = AudioResampler(format="flt", layout=layout, rate=rate)
-        chunks: list = []
-        max_samples = int(math.ceil(max_seconds * rate))
-        total = 0
-        frames = list(container.decode(stream))
-        frames.append(None)
-        for frame in frames:
+        resampler = AudioResampler(format="fltp", layout=layout, rate=rate)
+        parts: list = []
+        # Emit exactly the frames whose timestamps are strictly before the
+        # requested duration (real ffmpeg's `-t` semantics). h3.c sets
+        # -t = seconds + 1/rate, which lands exactly on a sample boundary;
+        # we must exclude that boundary frame so the byte count fits h3's
+        # capacity read and the trailing EOF check passes.
+        total = max_seconds * rate
+        max_samples = int(total)
+        if max_samples >= total:  # frame exactly at -t boundary -> excluded
+            max_samples -= 1
+        for frame in list(container.decode(stream)) + [None]:
             for resampled in resampler.resample(frame):
                 arr = resampled.to_ndarray()
-                if arr.ndim == 2:
-                    arr = np.ascontiguousarray(arr.T)
-                else:
-                    arr = np.ascontiguousarray(arr.reshape(-1, channels))
-                remain = max_samples - total
-                if remain <= 0:
-                    break
-                if arr.shape[0] > remain:
-                    arr = arr[:remain]
-                chunks.append(arr.astype(np.float32, copy=False))
-                total += int(arr.shape[0])
-            if total >= max_samples:
-                break
-        if not chunks:
+                if arr.ndim == 1:
+                    arr = arr.reshape(1, -1)
+                parts.append(np.asarray(arr, dtype=np.float32))
+        if not parts:
             _die(f"could not decode audio from {path}")
-        data = np.concatenate(chunks, axis=0)
-        return data.astype("<f4", copy=False).tobytes()
+        # (channels, samples)
+        data = np.concatenate(parts, axis=1).astype("<f4", copy=False)
+        # Pad short inputs with silence up to the requested length; trim excess.
+        if data.shape[1] < max_samples:
+            pad = np.zeros((data.shape[0], max_samples - data.shape[1]), dtype="<f4")
+            data = np.concatenate([data, pad], axis=1)
+        else:
+            data = data[:, :max_samples]
+        # Upmix mono input to the requested number of channels.
+        if data.shape[0] == 1 and channels > 1:
+            data = np.repeat(data, channels, axis=0)
+        elif data.shape[0] < channels:
+            extra = np.zeros((channels - data.shape[0], data.shape[1]), dtype="<f4")
+            data = np.concatenate([data, extra], axis=0)
+        # Interleave to (samples, channels) contiguous for f32le.
+        data = np.ascontiguousarray(data.T)
+        return data.tobytes()
     finally:
         container.close()
 

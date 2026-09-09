@@ -156,6 +156,9 @@ export function ModelsManager({ api, onClose, onDownloadStateChange }: ModelsMan
       cancelled = true;
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
+      // The download lives server-side; releasing this flag lets App re-open the
+      // modal at any time (the flag must never stick "true" on unmount).
+      onDownloadStateChange?.(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);

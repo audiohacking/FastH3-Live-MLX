@@ -185,7 +185,14 @@ Done: first/last/fl2va uploads, library-frame capture, clip ×N last-frame chain
 
 ### P6 — Ref2VA
 
-**UI (one-shot) is in tree:** ordered ref list under the prompt (image / silent video / video / video+audio / audio), Picture N / Video N tokens, mutual exclusion with first/last-frame, documented canvas dropdown, audio duration checks (2–15 s each, total ≤15 s) at ingest.
+**UI (one-shot) is in tree:** ordered ref list under the prompt (image / silent video / video / video+audio / audio), Picture N / Video N tokens, mutual exclusion with first/last-frame, documented canvas dropdown, audio duration checks (2–15 s each, total ≤15 s) at ingest. **Ref2VA is the default UI mode on open** (add a reference to enable Generate).
+
+**Audio import (v1) is fixed:** mono/stereo audio references are decoded through the PyAV shim with planar `fltp` resampling so the byte stream satisfies h3.c's frame-alignment check — see `DEV.md`.
+
+**INT8 default for NEW installs (pending):** the Comfy-Org INT8 convrot model
+(`minimax_h3_fl2va_pruned_int8_convrot`) worked well for Ref2VA; default new
+`download_model.py` setups to that INT8 FL2VA instead of the full BF16 FL2VA. Existing
+setups are left untouched.
 
 Still remaining for the warm session:
 
@@ -205,6 +212,12 @@ Still remaining for the warm session:
 - Frontend hot reload (`web` Vite :5299 → :8765) like ltx-ws
 - Benchmark script wrapping `h3 --profile`
 - Document M3 vs M5 paths (int8 default, TensorOps, ssd-streaming)
+
+### P9 — Generation preview (ComfyUI-Continuity style)
+
+- Research https://github.com/roadmaus/ComfyUI-Continuity and replicate a live
+  frame-by-frame preview of the running generation plus a cancel control, streamed over
+  the existing WS/SSE progress channel.
 
 ---
 
@@ -254,6 +267,9 @@ Copy UI chrome from `../ltx-ws/web` (layout, library, progress, clip multiplier)
 4. **FL2VA warm, Ref2VA on demand.**
 5. **Apple Silicon only** (Metal). No CUDA story.
 6. **h3.c media is a PyAV shim.** `H3_AV`/`H3_FFMPEG`/`H3_FFPROBE` point at `scripts/h3-av` (`h3_av.py`). No system ffmpeg install. Patch: `patches/h3-prefer-H3_AV.patch`.
+7. **`third_party/h3.c` is a local fork** that we manage inside this repo. We commit it
+   locally (the parent tracks the gitlink); we do **not** push to upstream `antirez/h3.c`,
+   and we sync upstream manually only if ever needed. No upstream relations or PRs.
 
 ## Open questions (resolve during P2–P5, not before)
 

@@ -987,16 +987,7 @@ def create_app(
         info = state.engine.info()
         gb = ram_gb()
         ssd = recommend_ssd_streaming(gb)
-        note = (
-            f"Native h3.c Metal. Model dir: {state.engine.model_dir}. "
-            f"Binary: {state.engine.h3_bin}."
-        )
-        if gb is not None:
-            note += f" This Mac reports ~{gb:.0f} GB unified memory."
-        if ssd:
-            note += " Under 64 GB RAM: leave SSD streaming off unless a run is killed for memory — it makes denoise much slower."
-        if info.get("metal4"):
-            note += " Metal 4 GPU: int8-row-fc2 is on."
+        note = f"Native h3.c Metal. Model dir: {state.engine.model_dir}."
         if not info.get("ok"):
             note += f" Engine: {info.get('error') or 'not ready'}."
         return {

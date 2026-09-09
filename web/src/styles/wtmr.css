@@ -3,12 +3,12 @@
 .wtmr {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 4px 0 10px;
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.22));
-  border-radius: var(--radius-md, 8px);
-  background: var(--bg-soft, rgba(0, 0, 0, 0.18));
-  padding: 10px 12px;
+  gap: 6px;
+  margin: 6px 2px 4px;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.2));
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  padding: 4px 8px 6px;
 }
 
 .wtmr--disabled {
@@ -20,7 +20,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .wtmr__label {
@@ -69,13 +69,13 @@
 
 .wtmr__toggle {
   margin-left: auto;
-  padding: 4px 10px;
+  padding: 2px 8px;
   font-size: 12px;
   font-weight: 500;
   border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
   border-radius: 6px;
   background: transparent;
-  color: var(--accent, #6ab0ff);
+  color: var(--muted, #9aa0aa);
   cursor: pointer;
 }
 

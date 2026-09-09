@@ -140,8 +140,8 @@ RESOLUTION_PRESETS = [
         512,
         aspect="1:1",
         group="Square",
-        label="1:1 · 512 × 512 — safest (default)",
-        guidance="Repeatedly validated development size.",
+        label="1:1 · 512 × 512 — default",
+        guidance="Balanced default resolution.",
     ),
     _canvas(
         "512x512-fast",

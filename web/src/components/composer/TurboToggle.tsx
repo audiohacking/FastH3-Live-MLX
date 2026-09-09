@@ -63,22 +63,3 @@ export function TurboToggle({
   );
 }
 
-interface TurboInfoProps {
-  visible: boolean;
-  tier: TurboTier;
-}
-
-export function TurboInfo({ visible, tier }: TurboInfoProps) {
-  if (!visible) return null;
-
-  const config = TURBO_CONFIG.TIERS[tier];
-
-  return (
-    <div className="turbo-info">
-      <span className="turbo-info__icon" aria-hidden>⚡</span>
-      <span className="turbo-info__text">
-        {config.label} mode: {config.steps} steps. {config.description}
-      </span>
-    </div>
-  );
-}

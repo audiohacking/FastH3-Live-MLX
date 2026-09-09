@@ -1,6 +1,6 @@
 // Phase 1 components
 export { PillSelect, PillRow, PillGroup, PillDivider, NumberPill, TextPill } from "./options/PillControls";
-export { TurboToggle, TurboInfo } from "./composer/TurboToggle";
+export { TurboToggle } from "./composer/TurboToggle";
 
 // Phase 2 components
 export { LoraCard, LoraStack } from "./lora/LoraCard";

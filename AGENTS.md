@@ -13,10 +13,12 @@ Canonical guide for AI agents using **h3-ws** to generate video on Apple Silicon
 | `web_ui.py` + `web/` | Browser library, quality presets, SSE progress. |
 | Weights | `models/MiniMax-H3/{FL2VA,Ref2VA}` from `MiniMaxAI/MiniMax-H3` |
 
-**Default Web UI:** http://127.0.0.1:8765/  
-**WebSocket:** ws://127.0.0.1:8765/ws  
+**Default Web UI:** http://127.0.0.1:8765/
+**WebSocket:** ws://127.0.0.1:8765/ws
 
-This stack does **not** run cloud prompt expansion. What you send is what H3 sees. h3.c media I/O is the PyAV shim (`scripts/h3-av`); no system ffmpeg.
+The app opens in **Ref2VA** mode by default (add an image/video/audio reference to enable Generate; switch modes as needed).
+
+This stack does **not** run cloud prompt expansion. What you send is what H3 sees. h3.c media I/O is the PyAV shim (`scripts/h3-av`); no system ffmpeg. The `third_party/h3.c` submodule is a **local fork** — we manage it inside this repo (commit locally, never push upstream); it carries the PyAV shim wiring, LoRA fold, and INT8 support. See [`DEV.md`](DEV.md) for the current handoff state.
 
 ## Weights (mandatory)
 
