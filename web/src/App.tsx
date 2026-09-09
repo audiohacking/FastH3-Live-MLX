@@ -1,38 +1,16 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { clipDisplayPrompt, snapshotFromClip } from "./clipEditor";
 import { applyProgressEvent } from "./progress";
 import { captureVideoFrame, formatVideoTime } from "./frameCapture";
-import { RefList, refsAreValid } from "./RefList";
+import { refsAreValid } from "./components/composer/RefListEnhanced";
 import { generateId } from "./utils";
 import { FEATURES, TURBO_CONFIG, type TurboTier } from "./config";
-import { PillSelect, PillRow, PillDivider, NumberPill, TextPill } from "./components/options/PillControls";
-import { TurboToggle } from "./components/composer/TurboToggle";
-import { ReferenceChips } from "./components/composer/ReferenceChips";
-import { RefListEnhanced } from "./components/composer/RefListEnhanced";
 import { LoraModal } from "./components/lora/LoraModal";
 import { TimelineStrip } from "./components/timeline/TimelineStrip";
-import { SceneQueue, AddToQueueButton } from "./components/composer/SceneQueue";
-import { PresetManager } from "./components/presets/PresetManager";
-import { CastPicker } from "./components/media/CastPicker";
 import { ModelsManager } from "./components/media/ModelsManager";
-import { WhatTheModelReads } from "./components/composer/WhatTheModelReads";
-import type { CastMember, Clip, Config, GenerationPreset, LibraryFrame, LoraPreset, PillOption, PresetOption, ProgressState, QualityPreset, ReferenceItem, SceneQueueItem } from "./types";
-
-function resolutionGroups(presets: PresetOption[]): { group: string; items: PresetOption[] }[] {
-  const order: { group: string; items: PresetOption[] }[] = [];
-  const index = new Map<string, number>();
-  for (const preset of presets) {
-    const group = preset.group || "";
-    let slot = index.get(group);
-    if (slot === undefined) {
-      slot = order.length;
-      index.set(group, slot);
-      order.push({ group, items: [] });
-    }
-    order[slot].items.push(preset);
-  }
-  return order;
-}
+import { ComposerPanel } from "./components/composer/ComposerPanel";
+import { compilePrompt } from "./compile";
+import type { CastMediaType, CastMember, CastMedia, Clip, Config, GenerationPreset, LibraryFrame, LoraPreset, PillOption, ProgressState, QualityPreset, ReferenceItem, RoutingMode, SceneQueueItem } from "./types";
 
 const H3_DEFAULT_STEPS = 20;
 const H3_DEFAULT_LAYERS = 50;
@@ -46,103 +24,6 @@ function fieldsFromPreset(preset: QualityPreset | undefined) {
     reuse: steps <= 7 ? 1 : (preset?.reuse ?? H3_DEFAULT_REUSE),
     tokenReduction: Boolean(preset?.token_reduction),
   };
-}
-
-function loraSelectionSummary(presets: LoraPreset[], selectedIds: string[]) {
-  const selected = presets.filter((p) => selectedIds.includes(p.id));
-  if (selected.length === 0) return "None";
-  if (selected.length === 1) {
-    const raw = selected[0].label.replace(/\s*\(default\)\s*$/i, "").trim();
-    return raw.length > 28 ? `${raw.slice(0, 27)}…` : raw;
-  }
-  return `${selected.length} LoRAs`;
-}
-
-function LoraMultiSelect({
-  presets,
-  selectedIds,
-  disabled,
-  onToggle,
-  onRemovePreset,
-}: {
-  presets: LoraPreset[];
-  selectedIds: string[];
-  disabled?: boolean;
-  onToggle: (id: string, checked: boolean) => void;
-  onRemovePreset: (preset: LoraPreset) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
-  const summary = loraSelectionSummary(presets, selectedIds);
-  return (
-    <div className={`multi-select${open ? " is-open" : ""}`} ref={rootRef}>
-      <button
-        type="button"
-        className="multi-select-trigger"
-        disabled={disabled}
-        aria-expanded={open}
-        title={summary}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="multi-select-trigger-text">{summary}</span>
-      </button>
-      {open && (
-        <div className="multi-select-menu" role="listbox" aria-label="LoRA presets">
-          {presets.map((p) => {
-            const checked = selectedIds.includes(p.id);
-            return (
-              <div
-                key={p.id}
-                className={`multi-select-item${checked ? " is-selected" : ""}`}
-                role="option"
-                aria-selected={checked}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  disabled={disabled}
-                  aria-label={p.label}
-                  onChange={(e) => onToggle(p.id, e.target.checked)}
-                />
-                <span
-                  className="multi-select-item-label"
-                  title={p.guidance ?? p.label}
-                  onClick={() => {
-                    if (!disabled) onToggle(p.id, !checked);
-                  }}
-                >
-                  {p.label}
-                </span>
-                {p.custom ? (
-                  <button
-                    type="button"
-                    className="lora-remove"
-                    title="Remove from list"
-                    disabled={disabled}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onRemovePreset(p);
-                    }}
-                  >
-                    ×
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
 }
 
 const API = "";
@@ -237,12 +118,6 @@ function replaceChainClips(prev: Clip[], chainId: string, chainClips: Clip[]): C
   return [...rest, ...preserveBlobVideoUrls(prev, chainClips)];
 }
 
-function formatBytes(n?: number) {
-  if (!n) return "";
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 const ROUNDED_DURATIONS: [number, number][] = [
   [22, 1],
   [56, 2],
@@ -309,7 +184,7 @@ async function createPreset(preset: GenerationPreset): Promise<void> {
   });
 }
 
-async function uploadFile(file: File, kind: string): Promise<string> {
+async function uploadFile(file: File, kind: string): Promise<{ path: string; durationS?: number; filename?: string }> {
   const fd = new FormData();
   fd.append("file", file);
   const r = await fetch(`${API}/api/upload?kind=${encodeURIComponent(kind)}`, {
@@ -318,11 +193,14 @@ async function uploadFile(file: File, kind: string): Promise<string> {
   });
   if (!r.ok) throw new Error("Upload failed");
   const data = await r.json();
-  return data.path as string;
+  return {
+    path: data.path as string,
+    durationS: typeof data.duration_s === "number" ? data.duration_s : undefined,
+    filename: data.filename as string | undefined,
+  };
 }
 
 const IMAGE_MODES = new Set(["first_frame", "fl2va"]);
-const END_IMAGE_MODES = new Set(["last_frame", "fl2va"]);
 
 export default function App() {
   const [config, setConfig] = useState<Config | null>(null);
@@ -330,6 +208,7 @@ export default function App() {
   const [frameLibrary, setFrameLibrary] = useState<LibraryFrame[]>([]);
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState("ref2va");
+  const [routing, setRouting] = useState<RoutingMode>("ref2va");
   const [quality, setQuality] = useState("fast");
   const [resolutionId, setResolutionId] = useState("512x512");
   const [durationId, setDurationId] = useState("1s");
@@ -342,13 +221,9 @@ export default function App() {
   const [tokenReduction, setTokenReduction] = useState(true);
   const [loraPresetIds, setLoraPresetIds] = useState<string[]>([]);
   const [loraPresets, setLoraPresets] = useState<LoraPreset[]>([]);
-  const [customLoraUrl, setCustomLoraUrl] = useState("");
-  const [customLoraLabel, setCustomLoraLabel] = useState("");
-  const [customLoraScale, setCustomLoraScale] = useState("0.8");
   const [addingCustomLora, setAddingCustomLora] = useState(false);
   const [loraBusy, setLoraBusy] = useState(false);
   const [loraActivity, setLoraActivity] = useState<string | null>(null);
-  const [showOptions, setShowOptions] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ProgressState | null>(null);
@@ -374,43 +249,50 @@ export default function App() {
   const [modelsDownloadActive, setModelsDownloadActive] = useState(false);
   const [modelsCloseWarning, setModelsCloseWarning] = useState(false);
   const [lockedClipIds, setLockedClipIds] = useState<Set<string>>(new Set());
-  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const [libraryOpen, setLibraryOpen] = useState(true);
+  const [framesOpen, setFramesOpen] = useState(true);
   const playerVideoRef = useRef<HTMLVideoElement>(null);
-  const imageRef = useRef<HTMLInputElement>(null);
-  const endImageRef = useRef<HTMLInputElement>(null);
   const runEventSourceRef = useRef<EventSource | null>(null);
   const clipsRef = useRef<Clip[]>([]);
   clipsRef.current = clips;
 
   const libraryClips = useMemo(
-    () => clips.filter((c) => c.status === "done" && c.video_url),
+    () =>
+      clips
+        .filter((c) => c.status === "done" && c.video_url)
+        .slice()
+        .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")),
     [clips],
+  );
+  const framesNewest = useMemo(
+    () => [...frameLibrary].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")),
+    [frameLibrary],
   );
   const activeClip = useMemo(() => {
     if (selectedClipId) return clips.find((c) => c.id === selectedClipId) ?? null;
-    return libraryClips[libraryClips.length - 1] ?? null;
+    return libraryClips[0] ?? null;
   }, [clips, selectedClipId, libraryClips]);
   const chainParts = useMemo(
     () => (chainId ? clips.filter((c) => c.chain_id === chainId) : []),
     [clips, chainId],
   );
   const showChainPicker = chainParts.filter((c) => c.video_url).length > 1;
-  const resolution = useMemo(() => {
-    const p = config?.resolution_presets.find((r) => r.id === resolutionId);
-    return {
-      width: p?.width ?? 512,
-      height: p?.height ?? 512,
-      render_width: p?.render_width,
-      render_height: p?.render_height,
-      guidance: p?.guidance,
-    };
-  }, [config, resolutionId]);
-  const durationPreset = config?.duration_presets.find((d) => d.id === durationId);
-  const isRef2va = mode === "ref2va" || refs.length > 0;
-  const isMultiClip = clipMultiplier > 1 && !isRef2va;
-  const needsFirst = IMAGE_MODES.has(mode) && !isRef2va;
-  const needsLast = END_IMAGE_MODES.has(mode) && !isRef2va;
-  const lastUsesPrimaryUpload = mode === "last_frame" && !isRef2va;
+  const compiled = useMemo(
+    () =>
+      compilePrompt({
+        prompt,
+        refs,
+        castMembers,
+        selectedCastIds,
+        routing,
+        imagePath,
+        endImagePath,
+      }),
+    [prompt, refs, castMembers, selectedCastIds, routing, imagePath, endImagePath],
+  );
+  const effectiveMode = compiled.modeHint;
+  const isRef2va = effectiveMode === "ref2va";
+  const needsFirst = IMAGE_MODES.has(effectiveMode) && !isRef2va;
   const previewCanvas = resolutionId === "256x256";
   const aggressiveInternal = resolutionId === "512x512-aggressive";
   const tokenReductionLocked =
@@ -419,27 +301,21 @@ export default function App() {
     quality === "aggressive" ||
     (layers === 40 && reuse === 3) ||
     loraPresetIds.length > 0;
-  const closePreset = config?.quality_presets.find((p) => p.id === "close");
-
-  // Pill options for the new UI
-  const modeOptions: PillOption[] = useMemo(
-    () => (config?.generation_modes ?? []).map((m) => ({ id: m.id, label: m.label })),
-    [config?.generation_modes],
-  );
-
   const qualityOptions: PillOption[] = useMemo(
     () =>
       (config?.quality_presets ?? []).map((p) => ({
         id: p.id,
         label: p.label,
+        shortLabel: ({
+          four_step: "4-step",
+          aggressive: "aggr",
+          fast: "fast",
+          balanced: "bal",
+          close: "close",
+        } as Record<string, string>)[p.id],
         description: p.guidance ?? undefined,
       })),
     [config?.quality_presets],
-  );
-
-  const durationOptions: PillOption[] = useMemo(
-    () => (config?.duration_presets ?? []).map((d) => ({ id: d.id, label: d.id })),
-    [config?.duration_presets],
   );
 
   useEffect(() => {
@@ -494,6 +370,7 @@ export default function App() {
       });
       setPrompt(snap.prompt);
       setMode(snap.mode);
+      setRouting(snap.mode === "ref2va" ? "ref2va" : snap.mode === "t2va" ? "auto" : "fl2va");
       setResolutionId(snap.resolutionId);
       setDurationId(snap.durationId);
       setClipMultiplier(snap.clipMultiplier);
@@ -597,7 +474,9 @@ export default function App() {
     const scene: SceneQueueItem = {
       id: generateId(),
       prompt,
-      mode,
+      mode: compiled.modeHint,
+      routing,
+      selectedCastIds: [...selectedCastIds],
       quality,
       resolutionId,
       durationId,
@@ -633,6 +512,8 @@ export default function App() {
   function loadSceneToEditor(scene: SceneQueueItem) {
     setPrompt(scene.prompt);
     setMode(scene.mode);
+    setRouting(scene.routing ?? (scene.mode === "ref2va" ? "ref2va" : scene.mode === "t2va" ? "auto" : "fl2va"));
+    setSelectedCastIds(scene.selectedCastIds ?? []);
     setQuality(scene.quality);
     setResolutionId(scene.resolutionId);
     setDurationId(scene.durationId);
@@ -657,45 +538,25 @@ export default function App() {
   }
 
   async function runSceneQueue() {
-    // Run all pending scenes sequentially
     const pending = sceneQueue.filter((s) => s.status === "pending");
-    if (pending.length === 0) return;
+    if (pending.length === 0 || queueRunning || busy) return;
 
     setQueueRunning(true);
     for (const scene of pending) {
-      // Load scene settings
       loadSceneToEditor(scene);
-      // Mark as generating
       setSceneQueue((prev) =>
-        prev.map((s) => (s.id === scene.id ? { ...s, status: "generating" as const } : s))
+        prev.map((s) => (s.id === scene.id ? { ...s, status: "generating" as const } : s)),
       );
-      // Trigger generation (we need to await it completing via SSE)
-      // For now, just mark as done after a short delay - actual implementation would await the run
-      // This is a placeholder - full implementation would use the existing handleRun logic
       try {
-        // Trigger the generation button programmatically
-        const genButton = document.querySelector<HTMLButtonElement>(".gen-submit");
-        if (genButton && !genButton.disabled) {
-          genButton.click();
-          // Wait for generation to complete (monitor busy state)
-          await new Promise<void>((resolve) => {
-            const checkInterval = setInterval(() => {
-              // Check if no longer busy
-              if (!document.querySelector(".gen-submit:disabled")) {
-                clearInterval(checkInterval);
-                resolve();
-              }
-            }, 500);
-          });
-        }
+        await submitScene(scene);
         setSceneQueue((prev) =>
-          prev.map((s) => (s.id === scene.id ? { ...s, status: "done" as const } : s))
+          prev.map((s) => (s.id === scene.id ? { ...s, status: "done" as const } : s)),
         );
       } catch (e) {
         setSceneQueue((prev) =>
           prev.map((s) =>
-            s.id === scene.id ? { ...s, status: "failed" as const, error: String(e) } : s
-          )
+            s.id === scene.id ? { ...s, status: "failed" as const, error: String(e) } : s,
+          ),
         );
       }
     }
@@ -730,6 +591,7 @@ export default function App() {
 
   function loadPreset(preset: GenerationPreset) {
     setMode(preset.mode);
+    setRouting(preset.mode === "ref2va" ? "ref2va" : preset.mode === "t2va" ? "auto" : "fl2va");
     setQuality(preset.quality);
     setResolutionId(preset.resolutionId);
     setDurationId(preset.durationId);
@@ -797,6 +659,42 @@ export default function App() {
     setSelectedCastIds((prev) =>
       prev.includes(id) ? prev.filter((cid) => cid !== id) : [...prev, id]
     );
+  }
+
+  async function persistCast(member: CastMember) {
+    const r = await fetch(`${API}/api/cast/${member.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(member),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => null);
+      throw new Error((body && body.detail) || "Failed to update cast member");
+    }
+    const data = await r.json();
+    const next = data.cast as CastMember;
+    setCastMembers((prev) => prev.map((m) => (m.id === next.id ? next : m)));
+  }
+
+  async function attachCastMedia(id: string, file: File, type: CastMediaType) {
+    const member = castMembers.find((m) => m.id === id);
+    if (!member) return;
+    const up = await uploadFile(file, type);
+    const media: CastMedia = {
+      id: generateId(),
+      type,
+      path: up.path,
+      label: file.name,
+      thumbnailUrl: type === "image" ? URL.createObjectURL(file) : undefined,
+      durationS: up.durationS,
+    };
+    await persistCast({ ...member, media: [...(member.media ?? []), media] });
+  }
+
+  async function removeCastMedia(id: string, mediaId: string) {
+    const member = castMembers.find((m) => m.id === id);
+    if (!member) return;
+    await persistCast({ ...member, media: member.media.filter((m) => m.id !== mediaId) });
   }
 
   // Header "Models" button: always opens. Never blocks re-opening.
@@ -874,8 +772,7 @@ export default function App() {
     }
   }
 
-  async function addCustomLora() {
-    const spec = customLoraUrl.trim();
+  async function addCustomLora(spec: string, label: string, scale: number) {
     if (!spec || addingCustomLora) return;
     setAddingCustomLora(true);
     try {
@@ -884,8 +781,8 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           spec,
-          label: customLoraLabel.trim() || undefined,
-          scale: Number(customLoraScale) || 1,
+          label: label || undefined,
+          scale: scale || 1,
         }),
       });
       if (!r.ok) {
@@ -900,8 +797,6 @@ export default function App() {
         setLoraPresetIds((prev) => (prev.includes(data.id) ? prev : [...prev, data.id]));
         if (data.preset) applyLoraHints(data.preset);
       }
-      setCustomLoraUrl("");
-      setCustomLoraLabel("");
       setLoraActivity(`LoRA ready: ${data.preset?.label ?? spec}`);
     } catch (e) {
       setError(String(e));
@@ -939,6 +834,7 @@ export default function App() {
     setEndImagePath(null);
     setEndImageName(null);
     setRefs([]);
+    setSelectedCastIds([]);
     try {
       await fetch(`${API}/api/session/clear`, { method: "POST" });
     } catch (err) {
@@ -982,12 +878,99 @@ export default function App() {
   function handleRefsChange(next: ReferenceItem[]) {
     setRefs(next);
     if (next.length === 0) return;
-    setMode("ref2va");
     setImagePath(null);
     setImageName(null);
     setEndImagePath(null);
     setEndImageName(null);
     setClipMultiplier(1);
+  }
+
+  async function addImageRef(file: File) {
+    const up = await uploadFile(file, "image");
+    handleRefsChange([
+      ...refs,
+      {
+        id: generateId(),
+        kind: "image",
+        path: up.path,
+        name: file.name,
+        enabled: true,
+        durationS: up.durationS,
+        previewUrl: URL.createObjectURL(file),
+        refSize: "max",
+      },
+    ]);
+  }
+
+  async function addVideoRef(file: File, kind: "video" | "silent_video" | "video_audio") {
+    const up = await uploadFile(file, "video");
+    handleRefsChange([
+      ...refs,
+      {
+        id: generateId(),
+        kind,
+        path: up.path,
+        name: file.name,
+        enabled: true,
+        durationS: up.durationS,
+        refSize: "max",
+      },
+    ]);
+  }
+
+  async function addAudioRef(file: File) {
+    const up = await uploadFile(file, "audio");
+    handleRefsChange([
+      ...refs,
+      {
+        id: generateId(),
+        kind: "audio",
+        path: up.path,
+        name: file.name,
+        enabled: true,
+        durationS: up.durationS,
+        refSize: "max",
+      },
+    ]);
+  }
+
+  async function addVideoAudioRef(video: File, audio: File) {
+    const v = await uploadFile(video, "video");
+    const a = await uploadFile(audio, "audio");
+    handleRefsChange([
+      ...refs,
+      {
+        id: generateId(),
+        kind: "video_audio",
+        path: v.path,
+        name: video.name,
+        audioPath: a.path,
+        audioName: audio.name,
+        enabled: true,
+        durationS: a.durationS ?? v.durationS,
+        refSize: "max",
+      },
+    ]);
+  }
+
+  async function pickStartFile(file: File) {
+    const up = await uploadFile(file, "image");
+    setRefs([]);
+    setImagePath(up.path);
+    setImageName(file.name);
+    setRouting("fl2va");
+    if (!endImagePath) setMode("first_frame");
+    else setMode("fl2va");
+  }
+
+  async function pickEndFile(file: File) {
+    const up = await uploadFile(file, "image");
+    setRefs([]);
+    setEndImagePath(up.path);
+    setEndImageName(file.name);
+    setRouting("fl2va");
+    if (!imagePath) setMode("last_frame");
+    else setMode("fl2va");
   }
 
   function applyFrameAsInput(frame: LibraryFrame, which: "start" | "end") {
@@ -1032,128 +1015,226 @@ export default function App() {
     await fetch(`${API}/api/runs/${activeRunId}/cancel`, { method: "POST" });
   }
 
-  function subscribeRun(runId: string, runChainId: string) {
+  function subscribeRun(runId: string, runChainId: string): Promise<void> {
     runEventSourceRef.current?.close();
     setActiveRunId(runId);
     const es = new EventSource(`${API}/api/runs/${runId}/events`);
     runEventSourceRef.current = es;
-    let closed = false;
-    const finishRun = () => {
-      if (closed) return;
-      closed = true;
-      es.close();
-      runEventSourceRef.current = null;
-      setActiveRunId(null);
-      setBusy(false);
-      setProgress(null);
-      notifyGenerationReady();
-    };
-    es.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data) as Record<string, unknown>;
-      if (msg.type === "ping") return;
-      if (msg.type === "progress" || msg.type === "generation_keepalive") {
-        setProgress((prev) => applyProgressEvent(prev, msg));
-        return;
-      }
-      if (msg.type === "clip_started") {
-        setProgress({
-          phase: "generating",
-          message: `Clip ${Number(msg.index ?? 0) + 1}/${Number(msg.total ?? 1)}`,
-        });
-      }
-      if (msg.type === "clip_done" || msg.type === "merged") {
-        const clipId = String(msg.clip_id ?? "");
-        const videoUrl = String(msg.video_url ?? "");
-        fetchClips(runChainId).then((chainClips) => {
-          setClips((prev) => replaceChainClips(prev, runChainId, chainClips));
-          setSelectedClipId(pickPlaybackClip(chainClips, runChainId) ?? clipId ?? null);
-        });
-        void videoUrl;
-      }
-      if (msg.type === "run_cancelled") {
-        setProgress({ phase: "cancelled", message: String(msg.message || "Cancelled") });
-        finishRun();
-      } else if (msg.type === "run_complete" || msg.type === "run_done") {
-        finishRun();
-      } else if (msg.type === "error" || msg.type === "clip_failed") {
-        setError(String(msg.error || msg.message || "Failed"));
-        finishRun();
-      }
-    };
-    es.onerror = () => {
-      if (closed) return;
-      closed = true;
-      es.close();
-      runEventSourceRef.current = null;
-      setBusy(false);
-      setProgress(null);
-      setError((prev) => prev ?? "Lost connection to server while waiting for progress.");
-    };
+    return new Promise((resolve, reject) => {
+      let closed = false;
+      const finishRun = (err?: string) => {
+        if (closed) return;
+        closed = true;
+        es.close();
+        runEventSourceRef.current = null;
+        setActiveRunId(null);
+        setBusy(false);
+        setProgress(null);
+        if (err) {
+          reject(new Error(err));
+          return;
+        }
+        notifyGenerationReady();
+        resolve();
+      };
+      es.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data) as Record<string, unknown>;
+        if (msg.type === "ping") return;
+        if (msg.type === "progress" || msg.type === "generation_keepalive") {
+          setProgress((prev) => applyProgressEvent(prev, msg));
+          return;
+        }
+        if (msg.type === "clip_started") {
+          setProgress({
+            phase: "generating",
+            message: `Clip ${Number(msg.index ?? 0) + 1}/${Number(msg.total ?? 1)}`,
+          });
+        }
+        if (msg.type === "clip_done" || msg.type === "merged") {
+          const clipId = String(msg.clip_id ?? "");
+          fetchClips(runChainId).then((chainClips) => {
+            setClips((prev) => replaceChainClips(prev, runChainId, chainClips));
+            setSelectedClipId(pickPlaybackClip(chainClips, runChainId) ?? clipId ?? null);
+          });
+        }
+        if (msg.type === "run_cancelled") {
+          setProgress({ phase: "cancelled", message: String(msg.message || "Cancelled") });
+          finishRun("Cancelled");
+        } else if (msg.type === "run_complete" || msg.type === "run_done") {
+          finishRun();
+        } else if (msg.type === "error" || msg.type === "clip_failed") {
+          const message = String(msg.error || msg.message || "Failed");
+          setError(message);
+          finishRun(message);
+        }
+      };
+      es.onerror = () => {
+        const message = "Lost connection to server while waiting for progress.";
+        setError((prev) => prev ?? message);
+        finishRun(message);
+      };
+    });
   }
 
-  async function handleGenerate() {
-    if (!canSubmit || !prompt.trim() || busy) return;
+  async function postGenerate(body: Record<string, unknown>): Promise<void> {
     setError(null);
     setBusy(true);
     setProgress({ phase: "starting", message: "Submitting…" });
+    const r = await fetch(`${API}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      const detail = (err as { detail?: unknown }).detail;
+      throw new Error(typeof detail === "string" ? detail : "Generate failed");
+    }
+    const data = await r.json();
+    setChainId(data.chain_id);
+    setSelectedClipId(null);
+    setProgress(
+      data.started_immediately
+        ? { phase: "starting", message: "Starting…" }
+        : { phase: "queued", message: "Queued — waiting for current job…" },
+    );
+    const wait = subscribeRun(data.run_id, data.chain_id);
+    const chainClips = await fetchClips(data.chain_id);
+    setClips((prev) => mergeClips(prev, chainClips));
+    await wait;
+  }
+
+  function generateBody(opts: {
+    compiledPrompt: string;
+    fallbackPrompt: string;
+    modeHint: string;
+    refs: ReferenceItem[];
+    quality: string;
+    resolutionId: string;
+    durationId: string;
+    numSteps: number;
+    layers: number;
+    reuse: number;
+    seed: string;
+    clipMultiplier: number;
+    tokenReduction: boolean;
+    ssdStreaming: boolean;
+    loraPresetIds: string[];
+    imagePath: string | null;
+    endImagePath: string | null;
+  }): Record<string, unknown> {
+    const res = config?.resolution_presets.find((p) => p.id === opts.resolutionId);
+    const dur = config?.duration_presets.find((d) => d.id === opts.durationId);
+    const ref2va = opts.modeHint === "ref2va";
+    const multi = opts.clipMultiplier > 1 && !ref2va;
+    const tokenLocked =
+      opts.resolutionId === "256x256" ||
+      opts.resolutionId === "512x512-aggressive" ||
+      opts.quality === "aggressive" ||
+      (opts.layers === 40 && opts.reuse === 3) ||
+      opts.loraPresetIds.length > 0;
     const body: Record<string, unknown> = {
-      prompt: prompt.trim(),
-      mode: isRef2va ? "ref2va" : mode,
-      quality,
-      width: resolution.width,
-      height: resolution.height,
-      duration_seconds: durationPreset?.seconds,
-      num_frames: durationPreset?.num_frames,
-      clip_count: isRef2va ? 1 : clipMultiplier,
-      num_steps: numSteps,
-      layers,
-      reuse,
-      autocontinue: isMultiClip,
-      autoconcat: isMultiClip,
-      ssd_streaming: ssdStreaming,
-      token_reduction: tokenReductionLocked ? false : tokenReduction,
+      prompt: opts.compiledPrompt.trim() || opts.fallbackPrompt.trim(),
+      mode: opts.modeHint,
+      quality: opts.quality,
+      width: res?.width ?? 512,
+      height: res?.height ?? 512,
+      duration_seconds: dur?.seconds,
+      num_frames: dur?.num_frames,
+      clip_count: ref2va ? 1 : opts.clipMultiplier,
+      num_steps: opts.numSteps,
+      layers: opts.layers,
+      reuse: opts.reuse,
+      autocontinue: multi,
+      autoconcat: multi,
+      ssd_streaming: opts.loraPresetIds.length ? false : opts.ssdStreaming,
+      token_reduction: tokenLocked ? false : opts.tokenReduction,
       loras: loraPresets
-        .filter((p) => loraPresetIds.includes(p.id))
+        .filter((p) => opts.loraPresetIds.includes(p.id))
         .map((p) => ({ id: p.id, spec: p.spec, scale: p.scale })),
     };
-    if (loraPresetIds.length) body.ssd_streaming = false;
-    if (resolution.render_width) body.render_width = resolution.render_width;
-    if (resolution.render_height) body.render_height = resolution.render_height;
-    if (seed.trim() !== "") body.seed = Number(seed);
-    if (isRef2va) {
-      body.refs = refs.map((r) => ({
+    if (res?.render_width) body.render_width = res.render_width;
+    if (res?.render_height) body.render_height = res.render_height;
+    if (opts.seed.trim() !== "") body.seed = Number(opts.seed);
+    if (ref2va) {
+      body.refs = opts.refs.map((r) => ({
         kind: r.kind,
         path: r.path,
         name: r.name,
         audio_path: r.audioPath || undefined,
+        ref_size: r.refSize ?? "max",
       }));
     } else {
-      if (needsFirst && imagePath) body.image_path = imagePath;
-      if (lastUsesPrimaryUpload && imagePath) body.end_image_path = imagePath;
-      if (needsLast && !lastUsesPrimaryUpload && endImagePath) body.end_image_path = endImagePath;
-    }
-    try {
-      const r = await fetch(`${API}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) {
-        const err = await r.json().catch(() => ({}));
-        const detail = (err as { detail?: unknown }).detail;
-        throw new Error(typeof detail === "string" ? detail : "Generate failed");
+      if (IMAGE_MODES.has(opts.modeHint) && opts.imagePath) body.image_path = opts.imagePath;
+      if (opts.modeHint === "last_frame" && (opts.imagePath || opts.endImagePath)) {
+        body.end_image_path = opts.imagePath || opts.endImagePath;
       }
-      const data = await r.json();
-      setChainId(data.chain_id);
-      setSelectedClipId(null);
-      setProgress(
-        data.started_immediately
-          ? { phase: "starting", message: "Starting…" }
-          : { phase: "queued", message: "Queued — waiting for current job…" },
+      if (opts.modeHint === "fl2va" && opts.endImagePath) body.end_image_path = opts.endImagePath;
+    }
+    return body;
+  }
+
+  async function submitScene(scene: SceneQueueItem): Promise<void> {
+    const sceneCompiled = compilePrompt({
+      prompt: scene.prompt,
+      refs: scene.refs,
+      castMembers,
+      selectedCastIds: scene.selectedCastIds ?? [],
+      routing: scene.routing ?? (scene.mode === "ref2va" ? "ref2va" : scene.mode === "t2va" ? "auto" : "fl2va"),
+      imagePath: scene.imagePath,
+      endImagePath: scene.endImagePath,
+    });
+    if (!scene.prompt.trim()) throw new Error("Empty prompt");
+    if (sceneCompiled.modeHint === "ref2va" && !refsAreValid(sceneCompiled.refs).ok) {
+      throw new Error("Scene needs a valid image or video reference");
+    }
+    await postGenerate(
+      generateBody({
+        compiledPrompt: sceneCompiled.compiledPrompt,
+        fallbackPrompt: scene.prompt,
+        modeHint: sceneCompiled.modeHint,
+        refs: sceneCompiled.refs,
+        quality: scene.quality,
+        resolutionId: scene.resolutionId,
+        durationId: scene.durationId,
+        numSteps: scene.numSteps,
+        layers: scene.layers,
+        reuse: scene.reuse,
+        seed: scene.seed,
+        clipMultiplier: scene.clipMultiplier,
+        tokenReduction: scene.tokenReduction,
+        ssdStreaming: scene.ssdStreaming,
+        loraPresetIds: scene.loraPresetIds,
+        imagePath: scene.imagePath ?? null,
+        endImagePath: scene.endImagePath ?? null,
+      }),
+    );
+  }
+
+  async function handleGenerate() {
+    if (!canSubmit || !prompt.trim() || busy) return;
+    try {
+      await postGenerate(
+        generateBody({
+          compiledPrompt: compiled.compiledPrompt,
+          fallbackPrompt: prompt,
+          modeHint: compiled.modeHint,
+          refs: compiled.refs,
+          quality,
+          resolutionId,
+          durationId,
+          numSteps,
+          layers,
+          reuse,
+          seed,
+          clipMultiplier,
+          tokenReduction,
+          ssdStreaming,
+          loraPresetIds,
+          imagePath,
+          endImagePath,
+        }),
       );
-      subscribeRun(data.run_id, data.chain_id);
-      const chainClips = await fetchClips(data.chain_id);
-      setClips((prev) => mergeClips(prev, chainClips));
     } catch (e) {
       setError(String(e));
       setBusy(false);
@@ -1164,23 +1245,12 @@ export default function App() {
   const serverOk = config?.server_connected;
   const canSubmit = useMemo(() => {
     if (!prompt.trim() || busy || !serverOk) return false;
-    if (isRef2va) return refsAreValid(refs).ok;
+    if (isRef2va) return refsAreValid(compiled.refs).ok;
     if (needsFirst && !imagePath) return false;
-    if (mode === "last_frame" && !imagePath && !endImagePath) return false;
-    if (mode === "fl2va" && (!imagePath || !endImagePath)) return false;
+    if (effectiveMode === "last_frame" && !imagePath && !endImagePath) return false;
+    if (effectiveMode === "fl2va" && (!imagePath || !endImagePath)) return false;
     return true;
-  }, [prompt, busy, serverOk, isRef2va, refs, needsFirst, imagePath, endImagePath, mode]);
-
-  const fitPromptHeight = useCallback(() => {
-    const el = promptRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-  }, []);
-
-  useLayoutEffect(() => {
-    fitPromptHeight();
-  }, [prompt, fitPromptHeight]);
+  }, [prompt, busy, serverOk, isRef2va, compiled.refs, needsFirst, imagePath, endImagePath, effectiveMode]);
 
   const endpointLabel = useMemo(() => {
     if (typeof window === "undefined") return config?.server_url ?? "";
@@ -1199,16 +1269,6 @@ export default function App() {
             <button type="button" className="btn-secondary" onClick={openModels}>
               Models
             </button>
-          )}
-          {FEATURES.CAST_SYSTEM && (
-            <CastPicker
-              members={castMembers}
-              selectedIds={selectedCastIds}
-              onToggle={toggleCast}
-              onCreate={createCastMember}
-              onDelete={deleteCastMember}
-              disabled={busy}
-            />
           )}
           <button type="button" className="btn-secondary" onClick={() => void startNewProject()}>
             New project
@@ -1302,514 +1362,126 @@ export default function App() {
             )}
           </section>
 
-          <section className="composer">
-            <div className="prompt-row">
-              <div className="prompt-field-wrap">
-                {/* Reference chips shown above prompt when in ref2va mode */}
-                {FEATURES.REFERENCE_CHIPS && refs.length > 0 && (
-                  <ReferenceChips refs={refs} onChange={handleRefsChange} disabled={busy} />
-                )}
-                <textarea
-                  ref={promptRef}
-                  className="prompt-input"
-                  rows={1}
-                  placeholder={refs.length > 0
-                    ? "Describe the scene using Picture 1, Video 1, Audio 1…"
-                    : "Scene, action, camera, look, and audio…"}
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void handleGenerate();
-                    }
-                  }}
-                  disabled={busy}
-                />
-                <div className="prompt-field-actions">
-                  <button
-                    type="button"
-                    className="btn-prompt-action"
-                    onClick={() => setPrompt("")}
-                    disabled={busy || !prompt}
-                  >
-                    Clear
-                  </button>
-                </div>
-                {/* Model Reads shown below the prompt, kept compact */}
-                {FEATURES.WHAT_MODEL_READS && (
-                  <WhatTheModelReads refs={refs} prompt={prompt} disabled={busy} />
-                )}
-              </div>
-              <button type="button" className="btn-generate gen-submit" onClick={() => void handleGenerate()} disabled={!canSubmit}>
-                ↑
-              </button>
-              {FEATURES.SCENE_QUEUE && (
-                <AddToQueueButton onClick={addToSceneQueue} disabled={busy} />
-              )}
-            </div>
-
-            <button type="button" className="options-toggle" onClick={() => setShowOptions((v) => !v)}>
-              {showOptions ? "Hide options" : "Show options"}
-            </button>
-
-            {showOptions && config && (
-              <div className="options-panel">
-                <p className="hint">{config.model_note}</p>
-                {config.engine_ok === false && config.engine_error && (
-                  <p className="hint hint-inline">{config.engine_error}</p>
-                )}
-
-                {/* New Pill UI (Phase 1) - controlled by feature flag */}
-                {FEATURES.PILLS_UI && (
-                  <>
-                    <PillRow className="pills-main-row">
-                      <PillSelect
-                        label="Mode"
-                        options={modeOptions}
-                        value={mode}
-                        onChange={(next) => {
-                          setMode(next);
-                          setImagePath(null);
-                          setImageName(null);
-                          setEndImagePath(null);
-                          setEndImageName(null);
-                          if (next !== "ref2va") setRefs([]);
-                        }}
-                        disabled={busy}
-                      />
-                      <PillSelect
-                        label="Quality"
-                        options={qualityOptions}
-                        value={quality}
-                        onChange={(id) => {
-                          const preset = config.quality_presets.find((p) => p.id === id);
-                          const fields = fieldsFromPreset(preset);
-                          setQuality(id);
-                          setNumSteps(fields.steps);
-                          setLayers(fields.layers);
-                          setReuse(fields.reuse);
-                          setTokenReduction(fields.tokenReduction);
-                          // Disable turbo if switching quality
-                          if (turboEnabled) setTurboEnabled(false);
-                        }}
-                        disabled={busy}
-                      />
-                      <PillSelect
-                        label="Duration"
-                        options={durationOptions}
-                        value={durationId}
-                        onChange={setDurationId}
-                        disabled={busy}
-                        compact
-                      />
-                      {FEATURES.TURBO_MODE && (
-                        <>
-                          <PillDivider />
-                          <TurboToggle
-                            enabled={turboEnabled}
-                            onChange={(enabled) => void handleTurboToggle(enabled)}
-                            tier={turboTier}
-                            onTierChange={handleTurboTierChange}
-                            disabled={busy || loraBusy}
-                            loading={turboLoading}
-                          />
-                        </>
-                      )}
-                    </PillRow>
-                    <PillRow className="pills-params-row">
-                      <NumberPill
-                        label="Steps"
-                        value={numSteps}
-                        min={1}
-                        max={50}
-                        onChange={(next) => {
-                          setNumSteps(next);
-                          if (next <= 7) setReuse(1);
-                        }}
-                        disabled={busy}
-                        title="h3.c --steps (denoising passes)"
-                      />
-                      <NumberPill
-                        label="Layers"
-                        value={layers}
-                        min={1}
-                        max={50}
-                        onChange={setLayers}
-                        disabled={busy}
-                        title="h3.c --layers (DiT blocks per pass; default 50)"
-                      />
-                      <NumberPill
-                        label="Reuse"
-                        value={reuse}
-                        min={1}
-                        max={8}
-                        onChange={setReuse}
-                        disabled={busy || numSteps <= 7}
-                        title="h3.c --reuse (exclusive with --core-reuse; default 1)"
-                      />
-                      <PillDivider />
-                      <TextPill
-                        label="Seed"
-                        value={seed}
-                        placeholder="random"
-                        onChange={setSeed}
-                        disabled={busy}
-                      />
-                    </PillRow>
-                    {FEATURES.PRESETS && (
-                      <PresetManager
-                        presets={generationPresets}
-                        onSave={savePreset}
-                        onLoad={loadPreset}
-                        onDelete={deletePreset}
-                        disabled={busy}
-                      />
-                    )}
-                  </>
-                )}
-
-                {/* Legacy grid UI - shown when PILLS_UI is disabled */}
-                {!FEATURES.PILLS_UI && (
-                <div className="options-grid options-grid-compact">
-                  <label className="opt-mode">
-                    Mode
-                    <select
-                      value={mode}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        setMode(next);
-                        setImagePath(null);
-                        setImageName(null);
-                        setEndImagePath(null);
-                        setEndImageName(null);
-                        if (next !== "ref2va") setRefs([]);
-                      }}
-                    >
-                      {(config.generation_modes ?? []).map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Quality
-                    <select
-                      value={quality}
-                      onChange={(e) => {
-                        const id = e.target.value;
-                        const preset = config.quality_presets.find((p) => p.id === id);
-                        const fields = fieldsFromPreset(preset);
-                        setQuality(id);
-                        setNumSteps(fields.steps);
-                        setLayers(fields.layers);
-                        setReuse(fields.reuse);
-                        setTokenReduction(fields.tokenReduction);
-                      }}
-                    >
-                      {config.quality_presets.map((p) => (
-                        <option key={p.id} value={p.id} title={p.guidance ?? undefined}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="opt-resolution">
-                    Resolution
-                    <select
-                      value={resolutionId}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        setResolutionId(next);
-                        if (next === "256x256" || next === "512x512-aggressive") {
-                          setTokenReduction(false);
-                        }
-                      }}
-                    >
-                      {resolutionGroups(config.resolution_presets).map((g) =>
-                        g.group ? (
-                          <optgroup key={g.group} label={g.group}>
-                            {g.items.map((r) => (
-                              <option key={r.id} value={r.id}>
-                                {r.label}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ) : (
-                          g.items.map((r) => (
-                            <option key={r.id} value={r.id}>
-                              {r.label}
-                            </option>
-                          ))
-                        ),
-                      )}
-                    </select>
-                  </label>
-                  <label className="opt-narrow">
-                    Duration
-                    <select value={durationId} onChange={(e) => setDurationId(e.target.value)}>
-                      {config.duration_presets.map((d) => (
-                        <option key={d.id} value={d.id} title={d.label}>
-                          {d.id}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="opt-narrow">
-                    Clips
-                    <select
-                      value={clipMultiplier}
-                      onChange={(e) => setClipMultiplier(Number(e.target.value))}
-                      disabled={isRef2va}
-                    >
-                      {Array.from({ length: config.clip_multiplier_max ?? 10 }, (_, i) => i + 1).map((n) => (
-                        <option key={n} value={n}>
-                          ×{n}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="opt-narrow">
-                    Steps
-                    <input
-                      type="number"
-                      min={1}
-                      max={50}
-                      title="h3.c --steps (denoising passes)"
-                      value={numSteps}
-                      onChange={(e) => {
-                        const next = Number(e.target.value);
-                        setNumSteps(next);
-                        if (next <= 7) setReuse(1);
-                      }}
-                    />
-                  </label>
-                  <label className="opt-narrow">
-                    Layers
-                    <input
-                      type="number"
-                      min={1}
-                      max={50}
-                      title="h3.c --layers (DiT blocks per pass; default 50)"
-                      value={layers}
-                      onChange={(e) => setLayers(Number(e.target.value))}
-                    />
-                  </label>
-                  <label className="opt-narrow">
-                    Reuse
-                    <input
-                      type="number"
-                      min={1}
-                      max={8}
-                      title="h3.c --reuse (exclusive with --core-reuse; default 1)"
-                      value={reuse}
-                      disabled={numSteps <= 7}
-                      onChange={(e) => setReuse(Number(e.target.value))}
-                    />
-                  </label>
-                  <label className="opt-seed">
-                    Seed
-                    <input
-                      type="text"
-                      placeholder="random"
-                      value={seed}
-                      onChange={(e) => setSeed(e.target.value)}
-                    />
-                  </label>
-                </div>
-                )}
-
-                <div className="lora-row">
-                  <div className="lora-row-select">
-                    <span className="lora-field-label">LoRA</span>
-                    <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                      <LoraMultiSelect
-                        presets={loraPresets}
-                        selectedIds={loraPresetIds}
-                        disabled={loraBusy || addingCustomLora || busy}
-                        onToggle={(id, checked) => void toggleLoraPreset(id, checked)}
-                        onRemovePreset={(preset) => void removeLoraPreset(preset)}
-                      />
-                      {FEATURES.LORA_MODAL && (
-                        <button
-                          type="button"
-                          className="btn-secondary btn-compact"
-                          onClick={() => setLoraModalOpen(true)}
-                          disabled={busy}
-                          title="Browse LoRA library"
-                        >
-                          Browse
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="lora-row-add">
-                    <input
-                      type="text"
-                      className="lora-add-url"
-                      placeholder="HF URL or path"
-                      aria-label="LoRA URL or file path"
-                      value={customLoraUrl}
-                      disabled={addingCustomLora}
-                      onChange={(e) => setCustomLoraUrl(e.target.value)}
-                    />
-                    <input
-                      type="text"
-                      className="lora-add-name"
-                      placeholder="Label"
-                      aria-label="LoRA display name"
-                      value={customLoraLabel}
-                      disabled={addingCustomLora}
-                      onChange={(e) => setCustomLoraLabel(e.target.value)}
-                    />
-                    <input
-                      type="number"
-                      className="lora-add-scale"
-                      min={0}
-                      max={2}
-                      step={0.05}
-                      aria-label="LoRA strength"
-                      title="Strength (0–2)"
-                      value={customLoraScale}
-                      disabled={addingCustomLora}
-                      onChange={(e) => setCustomLoraScale(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="btn-secondary btn-compact lora-add-btn"
-                      disabled={!customLoraUrl.trim() || addingCustomLora || loraBusy}
-                      onClick={() => void addCustomLora()}
-                    >
-                      {addingCustomLora ? "…" : "Add"}
-                    </button>
-                  </div>
-                </div>
-                {loraActivity && <p className="hint hint-inline">{loraActivity}</p>}
-                {loraPresetIds.length > 0 && (
-                  <p className="hint hint-inline">
-                    {loraPresets.find((p) => loraPresetIds.includes(p.id))?.guidance ??
-                      "LoRA is fused into DiT weights at load. SSD streaming stays off."}
-                  </p>
-                )}
-
-                <div className="options-checks">
-                  <label className="check">
-                    <input
-                      type="checkbox"
-                      checked={ssdStreaming && loraPresetIds.length === 0}
-                      onChange={(e) => setSsdStreaming(e.target.checked)}
-                      disabled={loraPresetIds.length > 0}
-                    />
-                    SSD streaming (saves RAM, slower denoise)
-                  </label>
-                  <label className="check">
-                    <input
-                      type="checkbox"
-                      checked={tokenReduction && !tokenReductionLocked}
-                      onChange={(e) => setTokenReduction(e.target.checked)}
-                      disabled={tokenReductionLocked}
-                    />
-                    Token reduction
-                  </label>
-                </div>
-
-                {quality === "close" && (
-                  <p className="hint hint-inline">
-                    {closePreset?.guidance ??
-                      "Close runs 50 complete 50-block denoiser forwards — the oracle when a fast mode changes subject, anatomy, motion, or composition."}
-                  </p>
-                )}
-                {resolution.guidance && <p className="hint hint-inline">{resolution.guidance}</p>}
-
-                {(needsFirst || needsLast || lastUsesPrimaryUpload) && (
-                  <div className="options-uploads">
-                    <span className="media-panel-title">
-                      {mode === "fl2va"
-                        ? "First and last frames"
-                        : mode === "last_frame"
-                          ? "Last frame"
-                          : "First frame"}
-                    </span>
-                    {(needsFirst || lastUsesPrimaryUpload) && (
-                      <label className="media-upload">
-                        <span className="media-upload-label">
-                          {mode === "last_frame" ? "Last frame" : "First frame"}
-                        </span>
-                        <input
-                          ref={imageRef}
-                          type="file"
-                          accept="image/*"
-                          onChange={async (e) => {
-                            const f = e.target.files?.[0];
-                            if (f) {
-                              setImagePath(await uploadFile(f, "image"));
-                              setImageName(f.name);
-                            }
-                          }}
-                        />
-                        <span className="media-upload-hint">{imageName ?? "Choose image…"}</span>
-                      </label>
-                    )}
-                    {mode === "fl2va" && (
-                      <label className="media-upload">
-                        <span className="media-upload-label">Last frame</span>
-                        <input
-                          ref={endImageRef}
-                          type="file"
-                          accept="image/*"
-                          onChange={async (e) => {
-                            const f = e.target.files?.[0];
-                            if (f) {
-                              setEndImagePath(await uploadFile(f, "image"));
-                              setEndImageName(f.name);
-                            }
-                          }}
-                        />
-                        <span className="media-upload-hint">{endImageName ?? "Choose image…"}</span>
-                      </label>
-                    )}
-                  </div>
-                )}
-
-                {mode === "ref2va" && (
-                  FEATURES.REFERENCE_CHIPS ? (
-                    <RefListEnhanced
-                      refs={refs}
-                      disabled={busy}
-                      frames={frameLibrary}
-                      clips={libraryClips}
-                      onChange={handleRefsChange}
-                      uploadFile={uploadFile}
-                    />
-                  ) : (
-                    <RefList
-                      refs={refs}
-                      disabled={busy}
-                      frames={frameLibrary}
-                      clips={libraryClips}
-                      onChange={handleRefsChange}
-                      uploadFile={uploadFile}
-                    />
-                  )
-                )}
-
-                {isMultiClip && (
-                  <p className="hint">
-                    ×{clipMultiplier} clips will chain last frame → first frame and merge the result.
-                  </p>
-                )}
-
-                {activeClip && (
-                  <p className="meta">
-                    Viewing: {formatDuration(activeClip.num_frames, config.defaults.fps)}
-                    {activeClip.width && activeClip.height ? ` · ${activeClip.width}×${activeClip.height}` : ""}
-                    {activeClip.bytes ? ` · ${formatBytes(activeClip.bytes)}` : ""}
-                  </p>
-                )}
-              </div>
-            )}
-          </section>
+          {config && (
+            <ComposerPanel
+              busy={busy}
+              canSubmit={canSubmit}
+              prompt={prompt}
+              onPromptChange={setPrompt}
+              onGenerate={() => void handleGenerate()}
+              compiled={compiled}
+              refs={routing === "fl2va" ? [] : refs}
+              onRefsChange={handleRefsChange}
+              onAddImage={(file) => void addImageRef(file)}
+              onAddVideo={(file, kind) => void addVideoRef(file, kind)}
+              onAddAudio={(file) => void addAudioRef(file)}
+              onAddVideoAudio={(video, audio) => void addVideoAudioRef(video, audio)}
+              onClearComposer={() => {
+                setPrompt("");
+                setRefs([]);
+                setImagePath(null);
+                setImageName(null);
+                setEndImagePath(null);
+                setEndImageName(null);
+                setSelectedCastIds([]);
+              }}
+              onOpenLora={() => setLoraModalOpen(true)}
+              loraCount={loraPresetIds.length}
+              loraActivity={loraActivity}
+              castMembers={castMembers}
+              selectedCastIds={selectedCastIds}
+              onToggleCast={toggleCast}
+              onCreateCast={createCastMember}
+              onDeleteCast={deleteCastMember}
+              onAttachCastMedia={attachCastMedia}
+              onRemoveCastMedia={removeCastMedia}
+              presets={generationPresets}
+              onSavePreset={savePreset}
+              onLoadPreset={loadPreset}
+              onDeletePreset={deletePreset}
+              routing={routing}
+              onRoutingChange={setRouting}
+              durationId={durationId}
+              onDurationId={setDurationId}
+              resolutionId={resolutionId}
+              onResolutionId={(id) => {
+                setResolutionId(id);
+                if (id === "256x256" || id === "512x512-aggressive") setTokenReduction(false);
+              }}
+              config={config}
+              imageName={imageName}
+              endImageName={endImageName}
+              onPickStartFile={(file) => void pickStartFile(file)}
+              onPickEndFile={(file) => void pickEndFile(file)}
+              onPickStartFrame={(frame) => {
+                setRefs([]);
+                setImagePath(frame.path);
+                setImageName(frame.label);
+                setRouting("fl2va");
+              }}
+              onPickEndFrame={(frame) => {
+                setRefs([]);
+                setEndImagePath(frame.path);
+                setEndImageName(frame.label);
+                setRouting("fl2va");
+              }}
+              onClearStart={() => { setImagePath(null); setImageName(null); }}
+              onClearEnd={() => { setEndImagePath(null); setEndImageName(null); }}
+              frames={framesNewest}
+              clips={libraryClips}
+              onAddFrameRef={(frame) => applyFrameAsInput(frame, "start")}
+              onAddClipRef={(clip) => {
+                const path = clip.path || clip.filename;
+                if (!path) return;
+                handleRefsChange([
+                  ...refs,
+                  { id: generateId(), kind: "silent_video", path, name: clip.label || clip.filename, enabled: true, source: "library" },
+                ]);
+              }}
+              onAddShot={addToSceneQueue}
+              seed={seed}
+              onSeed={setSeed}
+              numSteps={numSteps}
+              onNumSteps={setNumSteps}
+              layers={layers}
+              onLayers={setLayers}
+              reuse={reuse}
+              onReuse={setReuse}
+              quality={quality}
+              qualityOptions={qualityOptions}
+              onQuality={(id) => {
+                const preset = config.quality_presets.find((p) => p.id === id);
+                const fields = fieldsFromPreset(preset);
+                setQuality(id);
+                setNumSteps(fields.steps);
+                setLayers(fields.layers);
+                setReuse(fields.reuse);
+                setTokenReduction(fields.tokenReduction);
+                if (turboEnabled) setTurboEnabled(false);
+              }}
+              turboEnabled={turboEnabled}
+              turboTier={turboTier}
+              turboLoading={turboLoading}
+              loraBusy={loraBusy}
+              onTurbo={(enabled) => void handleTurboToggle(enabled)}
+              onTurboTier={handleTurboTierChange}
+              tokenReduction={tokenReduction}
+              tokenReductionLocked={tokenReductionLocked}
+              onTokenReduction={setTokenReduction}
+              ssdStreaming={ssdStreaming}
+              ssdLocked={loraPresetIds.length > 0}
+              onSsdStreaming={setSsdStreaming}
+              clipMultiplier={clipMultiplier}
+              onClipMultiplier={setClipMultiplier}
+              sceneQueue={sceneQueue}
+              onRemoveScene={removeFromSceneQueue}
+              onReorderScenes={reorderSceneQueue}
+              onEditScene={loadSceneToEditor}
+              onRunQueue={() => void runSceneQueue()}
+              onClearQueue={clearSceneQueue}
+              queueRunning={queueRunning}
+            />
+          )}
         </div>
 
         <aside className="library">
@@ -1827,10 +1499,21 @@ export default function App() {
             </div>
           )}
 
-          <div className="library-header">
+          <button
+            type="button"
+            className="library-header library-header--toggle"
+            onClick={() => setLibraryOpen((v) => !v)}
+            aria-expanded={libraryOpen}
+          >
             <span className="library-title">Library</span>
-            <span className="library-count">{libraryClips.length}</span>
-          </div>
+            <span className="library-header__meta">
+              <span className="library-count">{libraryClips.length}</span>
+              <span className={`library-chevron${libraryOpen ? " is-open" : ""}`} aria-hidden>
+                ▾
+              </span>
+            </span>
+          </button>
+          {libraryOpen && (
           <div className="library-grid">
             {libraryClips.map((clip) => (
               <div
@@ -1864,33 +1547,31 @@ export default function App() {
               </div>
             ))}
           </div>
-
-          {FEATURES.SCENE_QUEUE && sceneQueue.length > 0 && (
-            <SceneQueue
-              scenes={sceneQueue}
-              onRemove={removeFromSceneQueue}
-              onReorder={reorderSceneQueue}
-              onEdit={loadSceneToEditor}
-              onRunAll={() => void runSceneQueue()}
-              onClear={clearSceneQueue}
-              disabled={busy}
-              running={queueRunning}
-            />
           )}
 
           <div className="library-section">
-            <div className="library-header">
+            <button
+              type="button"
+              className="library-header library-header--toggle"
+              onClick={() => setFramesOpen((v) => !v)}
+              aria-expanded={framesOpen}
+            >
               <span className="library-title">Frames</span>
-              <span className="library-count">{frameLibrary.length}</span>
-            </div>
-            {frameLibrary.length === 0 ? (
+              <span className="library-header__meta">
+                <span className="library-count">{framesNewest.length}</span>
+                <span className={`library-chevron${framesOpen ? " is-open" : ""}`} aria-hidden>
+                  ▾
+                </span>
+              </span>
+            </button>
+            {framesOpen && (framesNewest.length === 0 ? (
               <p className="library-empty-hint">
                 Pause a video and tap the camera icon to capture stills. Use them as a
                 first or last frame, or as a reference image when that mode is selected.
               </p>
             ) : (
               <div className="frame-library-grid">
-                {frameLibrary.map((frame) => (
+                {framesNewest.map((frame) => (
                   <div
                     key={frame.id}
                     className={`frame-card-wrap ${
@@ -1935,7 +1616,7 @@ export default function App() {
                   </div>
                 ))}
               </div>
-            )}
+            ))}
           </div>
         </aside>
       </div>
@@ -1975,6 +1656,8 @@ export default function App() {
           selectedIds={loraPresetIds}
           onToggle={(id, checked) => void toggleLoraPreset(id, checked)}
           onRemove={(preset) => void removeLoraPreset(preset)}
+          onAddCustom={addCustomLora}
+          addingCustom={addingCustomLora}
           disabled={busy || loraBusy}
         />
       )}

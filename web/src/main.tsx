@@ -11,6 +11,7 @@ import "./styles/presets.css";
 import "./styles/wtmr.css";
 import "./styles/models.css";
 import "./styles/cast.css";
+import "./styles/composer.css";
 import "./index.css";
 
 createRoot(document.getElementById("root")!).render(

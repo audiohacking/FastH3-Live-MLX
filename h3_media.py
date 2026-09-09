@@ -341,6 +341,34 @@ def probe_duration_seconds(path: Path | str) -> float | None:
         return None
 
 
+def resize_still_to_canvas(src: Path | str, dest: Path | str, width: int, height: int) -> Path:
+    """Resize an image still to the output canvas. Images only."""
+    import av
+
+    source = Path(src)
+    target = Path(dest)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    inp = av.open(str(source))
+    try:
+        frame = next(inp.decode(video=0))
+    finally:
+        inp.close()
+    frame = frame.reformat(width=int(width), height=int(height), format="rgb24")
+    out = av.open(str(target), mode="w", format="image2")
+    try:
+        stream = out.add_stream("png", rate=1)
+        stream.width = int(width)
+        stream.height = int(height)
+        stream.pix_fmt = "rgb24"
+        for packet in stream.encode(frame):
+            out.mux(packet)
+        for packet in stream.encode():
+            out.mux(packet)
+    finally:
+        out.close()
+    return target
+
+
 def assert_audio_durations(seconds: list[float]) -> None:
     """Enforce h3.c audio-reference limits (2–15 s each, ≤3 clips, total ≤15 s)."""
     if len(seconds) > MAX_REF_AUDIO_CLIPS:

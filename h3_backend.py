@@ -339,6 +339,7 @@ class RefItem:
     path: Path
     audio_path: Path | None = None
     name: str = ""
+    ref_size: str = "max"
 
     def file_count(self) -> int:
         if self.kind == "video_audio":
@@ -420,6 +421,7 @@ def parse_refs_payload(raw: Any) -> list[RefItem]:
                 path=Path(path),
                 audio_path=Path(audio) if audio else None,
                 name=str(entry.get("name") or Path(path).name),
+                ref_size=str(entry.get("ref_size") or "max").strip().lower() or "max",
             )
         )
     validate_refs(items)

@@ -11,21 +11,23 @@ interface SceneQueueProps {
   running?: boolean;
 }
 
-const STATUS_ICON: Record<SceneStatus, string> = {
-  pending: "",
-  generating: "",
-  done: "",
-  failed: "",
-  cancelled: "",
+const STATUS_LABEL: Record<SceneStatus, string> = {
+  pending: "pending",
+  generating: "running",
+  done: "done",
+  failed: "failed",
+  cancelled: "cancelled",
 };
 
-const STATUS_LABEL: Record<SceneStatus, string> = {
-  pending: "Pending",
-  generating: "Generating...",
-  done: "Complete",
-  failed: "Failed",
-  cancelled: "Cancelled",
-};
+function moveScene(scenes: SceneQueueItem[], index: number, delta: number): SceneQueueItem[] | null {
+  const next = index + delta;
+  if (next < 0 || next >= scenes.length) return null;
+  if (scenes[index].status !== "pending" || scenes[next].status !== "pending") return null;
+  const copy = [...scenes];
+  const [item] = copy.splice(index, 1);
+  copy.splice(next, 0, item);
+  return copy;
+}
 
 export function SceneQueue({
   scenes,
@@ -37,153 +39,90 @@ export function SceneQueue({
   disabled,
   running,
 }: SceneQueueProps) {
+  if (scenes.length === 0) return null;
+
   const pendingCount = scenes.filter((s) => s.status === "pending").length;
-  const hasScenes = scenes.length > 0;
   const canRun = pendingCount > 0 && !running && !disabled;
 
-  function handleDragStart(e: React.DragEvent, index: number) {
-    e.dataTransfer.setData("text/plain", String(index));
-    e.dataTransfer.effectAllowed = "move";
-  }
-
-  function handleDragOver(e: React.DragEvent) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-  }
-
-  function handleDrop(e: React.DragEvent, dropIndex: number) {
-    e.preventDefault();
-    const dragIndex = parseInt(e.dataTransfer.getData("text/plain"), 10);
-    if (dragIndex === dropIndex || isNaN(dragIndex)) return;
-
-    const reordered = [...scenes];
-    const [moved] = reordered.splice(dragIndex, 1);
-    reordered.splice(dropIndex, 0, moved);
-    onReorder(reordered);
-  }
-
-  function truncatePrompt(prompt: string, max = 60): string {
-    if (prompt.length <= max) return prompt;
-    return prompt.slice(0, max - 1) + "…";
-  }
-
   return (
-    <div className="scene-queue">
-      <div className="scene-queue__header">
-        <span className="scene-queue__title">Scene Queue</span>
-        {hasScenes && (
-          <span className="scene-queue__count">
-            {pendingCount} pending / {scenes.length} total
-          </span>
-        )}
+    <div className="scene-reel">
+      <div className="scene-reel__bar">
+        <span className="scene-reel__title">Scenes</span>
+        <span className="scene-reel__count">
+          {pendingCount} pending · {scenes.length}
+        </span>
+        <button type="button" className="chip-btn chip-btn--run" onClick={onRunAll} disabled={!canRun}>
+          {running ? "Running…" : `Run ${pendingCount}`}
+        </button>
+        <button type="button" className="chip-btn" onClick={onClear} disabled={disabled || running}>
+          Clear
+        </button>
       </div>
-
-      {!hasScenes && (
-        <p className="scene-queue__empty">
-          Queue scenes to generate them in sequence. Click "Add to Queue" to add the current configuration.
-        </p>
-      )}
-
-      {hasScenes && (
-        <div className="scene-queue__list">
-          {scenes.map((scene, index) => (
-            <div
-              key={scene.id}
-              className={`scene-queue__item scene-queue__item--${scene.status}`}
-              draggable={scene.status === "pending" && !disabled}
-              onDragStart={(e) => handleDragStart(e, index)}
-              onDragOver={handleDragOver}
-              onDrop={(e) => handleDrop(e, index)}
-            >
-              <span className="scene-queue__item-number">{index + 1}</span>
-              <div className="scene-queue__item-content">
-                <span className="scene-queue__item-prompt">
-                  {truncatePrompt(scene.prompt || "(no prompt)")}
+      <div className="scene-reel__lane">
+        {scenes.map((scene, index) => (
+          <article key={scene.id} className={`scene-reel__card scene-reel__card--${scene.status}`}>
+            <header className="scene-reel__card-head">
+              <span className="scene-reel__num">{index + 1}</span>
+              <span className="scene-reel__dur">{scene.durationId}</span>
+              <span className="scene-reel__mode">{scene.mode}</span>
+              <span className="scene-reel__status">{STATUS_LABEL[scene.status]}</span>
+            </header>
+            <p className="scene-reel__prompt">{scene.prompt.trim() || "(no prompt)"}</p>
+            <footer className="scene-reel__card-foot">
+              <button
+                type="button"
+                className="scene-reel__icon"
+                disabled={disabled || running || index === 0 || scene.status !== "pending"}
+                title="Move left"
+                onClick={() => {
+                  const next = moveScene(scenes, index, -1);
+                  if (next) onReorder(next);
+                }}
+              >
+                ◀
+              </button>
+              <button
+                type="button"
+                className="scene-reel__icon"
+                disabled={disabled || running || index === scenes.length - 1 || scene.status !== "pending"}
+                title="Move right"
+                onClick={() => {
+                  const next = moveScene(scenes, index, 1);
+                  if (next) onReorder(next);
+                }}
+              >
+                ▶
+              </button>
+              {scene.status === "pending" && (
+                <>
+                  <button
+                    type="button"
+                    className="scene-reel__text"
+                    disabled={disabled || running}
+                    onClick={() => onEdit(scene)}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="scene-reel__text"
+                    disabled={disabled || running}
+                    title="Remove"
+                    onClick={() => onRemove(scene.id)}
+                  >
+                    ×
+                  </button>
+                </>
+              )}
+              {scene.status === "failed" && scene.error && (
+                <span className="scene-reel__error" title={scene.error}>
+                  error
                 </span>
-                <span className="scene-queue__item-meta">
-                  {scene.mode} · {scene.resolutionId} · {scene.numSteps} steps
-                  {scene.turboEnabled && " · Turbo"}
-                </span>
-              </div>
-              <span className="scene-queue__item-status" title={STATUS_LABEL[scene.status]}>
-                {STATUS_ICON[scene.status]}
-              </span>
-              <div className="scene-queue__item-actions">
-                {scene.status === "pending" && (
-                  <>
-                    <button
-                      type="button"
-                      className="scene-queue__btn scene-queue__btn--edit"
-                      onClick={() => onEdit(scene)}
-                      disabled={disabled}
-                      title="Load into editor"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="scene-queue__btn scene-queue__btn--remove"
-                      onClick={() => onRemove(scene.id)}
-                      disabled={disabled}
-                      title="Remove from queue"
-                    >
-                      &times;
-                    </button>
-                  </>
-                )}
-                {scene.status === "failed" && scene.error && (
-                  <span className="scene-queue__item-error" title={scene.error}>
-                    Error
-                  </span>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {hasScenes && (
-        <div className="scene-queue__actions">
-          <button
-            type="button"
-            className="scene-queue__btn scene-queue__btn--run"
-            onClick={onRunAll}
-            disabled={!canRun}
-          >
-            {running ? "Running..." : `Run All (${pendingCount})`}
-          </button>
-          <button
-            type="button"
-            className="scene-queue__btn scene-queue__btn--clear"
-            onClick={onClear}
-            disabled={disabled || running}
-          >
-            Clear Queue
-          </button>
-        </div>
-      )}
+              )}
+            </footer>
+          </article>
+        ))}
+      </div>
     </div>
-  );
-}
-
-interface AddToQueueButtonProps {
-  onClick: () => void;
-  disabled?: boolean;
-}
-
-export function AddToQueueButton({ onClick, disabled }: AddToQueueButtonProps) {
-  return (
-    <button
-      type="button"
-      className="add-to-queue-btn"
-      onClick={onClick}
-      disabled={disabled}
-      title="Add current configuration to scene queue"
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-        <path d="M12 5v14M5 12h14" />
-      </svg>
-      <span>Add to Queue</span>
-    </button>
   );
 }

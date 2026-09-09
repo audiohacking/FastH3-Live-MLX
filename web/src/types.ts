@@ -123,6 +123,9 @@ export interface ModelProgress {
 
 export type RefKind = "image" | "silent_video" | "video" | "video_audio" | "audio";
 
+export type RoutingMode = "auto" | "fl2va" | "ref2va";
+export type RefSize = "max" | "match";
+
 export interface ReferenceItem {
   id: string;
   kind: RefKind;
@@ -130,6 +133,13 @@ export interface ReferenceItem {
   name: string;
   audioPath?: string;
   audioName?: string;
+  /** When false, the capsule stays on the node but is omitted from compile/generate. */
+  enabled?: boolean;
+  durationS?: number;
+  refSize?: RefSize;
+  previewUrl?: string;
+  source?: "upload" | "cast" | "library";
+  castId?: string;
 }
 
 export interface ProgressState {
@@ -157,12 +167,15 @@ export interface CastMember {
   updatedAt: string;
 }
 
+export type CastMediaType = "image" | "video" | "audio";
+
 export interface CastMedia {
   id: string;
-  type: "image" | "video";
+  type: CastMediaType;
   path: string;
   thumbnailUrl?: string;
   label?: string;
+  durationS?: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -277,6 +290,8 @@ export interface SceneQueueItem {
   id: string;
   prompt: string;
   mode: string;
+  routing?: RoutingMode;
+  selectedCastIds?: string[];
   quality: string;
   resolutionId: string;
   durationId: string;

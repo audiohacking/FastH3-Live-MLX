@@ -70,6 +70,33 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+.library-header--toggle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0 0 8px;
+  text-align: left;
+}
+
+.library-header__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.library-chevron {
+  display: inline-block;
+  color: var(--muted);
+  font-size: 0.7rem;
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+
+.library-chevron.is-open {
+  transform: rotate(0deg);
+}
+
 .library-title {
   font-size: 0.75rem;
   font-weight: 600;
