@@ -14,6 +14,7 @@ export { SceneQueue } from "./composer/SceneQueue";
 // Phase 5 components
 export { PresetManager } from "./presets/PresetManager";
 export { CastPicker } from "./media/CastPicker";
+export { StyleAtlas } from "./media/StyleAtlas";
 export { ModelsManager } from "./media/ModelsManager";
 export { WhatTheModelReads } from "./composer/WhatTheModelReads";
 export { ComposerPanel } from "./composer/ComposerPanel";

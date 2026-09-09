@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --port 5299",
     "build": "tsc && vite build",
-    "test:compile": "npx --yes tsx src/compile.test.ts",
+    "test:compile": "npx --yes tsx src/compile.test.ts && npx --yes tsx src/styleAtlas.test.ts",
     "preview": "vite preview --port 5299"
   },
   "dependencies": {

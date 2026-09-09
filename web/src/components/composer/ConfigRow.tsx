@@ -23,7 +23,6 @@ type Props = {
   onClearStart: () => void;
   onClearEnd: () => void;
   frames: LibraryFrame[];
-  onAddShot: () => void;
   engineNote?: string;
 };
 
@@ -59,7 +58,6 @@ export function ConfigRow({
   onClearStart,
   onClearEnd,
   frames,
-  onAddShot,
   engineNote,
 }: Props) {
   const startRef = useRef<HTMLInputElement>(null);
@@ -288,11 +286,6 @@ export function ConfigRow({
               ))}
             </div>
           )}
-        </div>
-        <div className="config-card__tail">
-          <button type="button" className="chip-btn" disabled={disabled} onClick={onAddShot}>
-            + Scene
-          </button>
         </div>
       </div>
       {engineNote && <p className="engine-note">{engineNote}</p>}

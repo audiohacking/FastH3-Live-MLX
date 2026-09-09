@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import type { CastMediaType, CastMember, Clip, Config, GenerationPreset, LibraryFrame, PillOption, ReferenceItem, RoutingMode, SceneQueueItem } from "../../types";
+import type { StyleEntry } from "../../styleAtlas";
 import { FEATURES, type TurboTier } from "../../config";
 import { mentionCandidates, type CompileResult } from "../../compile";
 import { ComposerRail } from "./ComposerRail";
@@ -40,6 +41,8 @@ export type ComposerPanelProps = {
   onSavePreset: (name: string, description?: string) => void;
   onLoadPreset: (preset: GenerationPreset) => void;
   onDeletePreset: (id: string) => void;
+  activeStyleId?: string | null;
+  onApplyStyle: (style: StyleEntry) => void;
   routing: RoutingMode;
   onRoutingChange: (next: RoutingMode) => void;
   durationId: string;
@@ -199,6 +202,8 @@ export function ComposerPanel(props: ComposerPanelProps) {
             onLoad={props.onLoadPreset}
             onDelete={props.onDeletePreset}
             disabled={busy}
+            activeStyleId={props.activeStyleId}
+            onApplyStyle={props.onApplyStyle}
           />
         }
       />
@@ -270,9 +275,14 @@ export function ComposerPanel(props: ComposerPanelProps) {
             disabled={busy}
           />
         </div>
-        <button type="button" className="btn-generate gen-submit" onClick={onGenerate} disabled={!canSubmit}>
-          ↑
-        </button>
+        <div className="composer-prompt__actions">
+          <button type="button" className="btn-add-scene" onClick={props.onAddShot} disabled={busy} title="Add scene">
+            +
+          </button>
+          <button type="button" className="btn-generate gen-submit" onClick={onGenerate} disabled={!canSubmit}>
+            ↑
+          </button>
+        </div>
       </div>
 
       <div className="config-card">
@@ -296,7 +306,6 @@ export function ComposerPanel(props: ComposerPanelProps) {
           onClearStart={props.onClearStart}
           onClearEnd={props.onClearEnd}
           frames={props.frames}
-          onAddShot={props.onAddShot}
           engineNote={props.config.engine_ok === false ? (props.config.engine_error ?? undefined) : undefined}
         />
         <SamplerRow

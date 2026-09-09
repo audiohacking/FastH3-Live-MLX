@@ -10,6 +10,7 @@ import { TimelineStrip } from "./components/timeline/TimelineStrip";
 import { ModelsManager } from "./components/media/ModelsManager";
 import { ComposerPanel } from "./components/composer/ComposerPanel";
 import { compilePrompt } from "./compile";
+import { leadWithStyle } from "./styleAtlas";
 import type { CastMediaType, CastMember, CastMedia, Clip, Config, GenerationPreset, LibraryFrame, LoraPreset, PillOption, ProgressState, QualityPreset, ReferenceItem, RoutingMode, SceneQueueItem } from "./types";
 
 const H3_DEFAULT_STEPS = 20;
@@ -251,6 +252,7 @@ export default function App() {
   const [lockedClipIds, setLockedClipIds] = useState<Set<string>>(new Set());
   const [libraryOpen, setLibraryOpen] = useState(true);
   const [framesOpen, setFramesOpen] = useState(true);
+  const [activeStyleId, setActiveStyleId] = useState<string | null>(null);
   const playerVideoRef = useRef<HTMLVideoElement>(null);
   const runEventSourceRef = useRef<EventSource | null>(null);
   const clipsRef = useRef<Clip[]>([]);
@@ -1399,6 +1401,11 @@ export default function App() {
               onSavePreset={savePreset}
               onLoadPreset={loadPreset}
               onDeletePreset={deletePreset}
+              activeStyleId={activeStyleId}
+              onApplyStyle={(style) => {
+                setPrompt((prev) => leadWithStyle(prev, style.text));
+                setActiveStyleId(style.id);
+              }}
               routing={routing}
               onRoutingChange={setRouting}
               durationId={durationId}
