@@ -9,6 +9,7 @@ import { LoraModal } from "./components/lora/LoraModal";
 import { TimelineStrip } from "./components/timeline/TimelineStrip";
 import { ModelsManager } from "./components/media/ModelsManager";
 import { ComposerPanel } from "./components/composer/ComposerPanel";
+import { ProjectSwitcher, type Project } from "./components/ProjectSwitcher";
 import { compilePrompt } from "./compile";
 import { leadWithStyle } from "./styleAtlas";
 import type { CastMediaType, CastMember, CastMedia, Clip, Config, GenerationPreset, LibraryFrame, LoraPreset, PillOption, ProgressState, QualityPreset, ReferenceItem, RoutingMode, SceneQueueItem } from "./types";
@@ -156,6 +157,39 @@ async function fetchClips(chainId?: string): Promise<Clip[]> {
   return data.clips as Clip[];
 }
 
+/** Deep-link: `?id=<clip_id>` opens that clip. Bare reload stays a clean canvas. */
+function clipIdFromUrl(): string | null {
+  try {
+    const id = new URLSearchParams(window.location.search).get("id");
+    return id?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeClipIdToUrl(clipId: string | null) {
+  try {
+    const url = new URL(window.location.href);
+    if (clipId) url.searchParams.set("id", clipId);
+    else url.searchParams.delete("id");
+    const next = `${url.pathname}${url.search}${url.hash}`;
+    const cur = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (next !== cur) window.history.replaceState(null, "", next);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function fetchProjects(): Promise<{ projects: Project[]; active_project_id: string | null }> {
+  const r = await fetch(`${API}/api/projects`);
+  if (!r.ok) throw new Error("Failed to load projects");
+  const data = await r.json();
+  return {
+    projects: (data.projects ?? []) as Project[],
+    active_project_id: (data.active_project_id as string | null) ?? null,
+  };
+}
+
 async function fetchFrames(): Promise<LibraryFrame[]> {
   const r = await fetch(`${API}/api/frames`);
   if (!r.ok) throw new Error("Failed to load frames");
@@ -229,7 +263,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ProgressState | null>(null);
   const [chainId, setChainId] = useState<string | null>(null);
-  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(() => clipIdFromUrl());
+  const urlClipHydratedRef = useRef(false);
+  const [clipsReady, setClipsReady] = useState(false);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [imagePath, setImagePath] = useState<string | null>(null);
   const [imageName, setImageName] = useState<string | null>(null);
@@ -271,9 +309,9 @@ export default function App() {
     [frameLibrary],
   );
   const activeClip = useMemo(() => {
-    if (selectedClipId) return clips.find((c) => c.id === selectedClipId) ?? null;
-    return libraryClips[0] ?? null;
-  }, [clips, selectedClipId, libraryClips]);
+    if (!selectedClipId) return null;
+    return clips.find((c) => c.id === selectedClipId) ?? null;
+  }, [clips, selectedClipId]);
   const chainParts = useMemo(
     () => (chainId ? clips.filter((c) => c.chain_id === chainId) : []),
     [clips, chainId],
@@ -347,7 +385,18 @@ export default function App() {
         if (defDur) setDurationId(defDur.id);
       })
       .catch((e) => setError(String(e)));
-    fetchClips().then(setClips).catch(() => undefined);
+    fetchClips()
+      .then((c) => {
+        setClips(c);
+        setClipsReady(true);
+      })
+      .catch(() => setClipsReady(true));
+    fetchProjects()
+      .then((data) => {
+        setProjects(data.projects);
+        setActiveProjectId(data.active_project_id);
+      })
+      .catch(() => undefined);
     fetchFrames().then(setFrameLibrary).catch(() => undefined);
     fetchCastMembers().then(setCastMembers).catch(() => undefined);
     fetchBackendPresets().then((presets) => {
@@ -359,9 +408,14 @@ export default function App() {
     };
   }, []);
 
+  const selectClipId = useCallback((clipId: string | null) => {
+    setSelectedClipId(clipId);
+    writeClipIdToUrl(clipId);
+  }, []);
+
   const applyClipSelection = useCallback(
     (clip: Clip) => {
-      setSelectedClipId(clip.id);
+      selectClipId(clip.id);
       setChainId(clip.chain_id);
       if (!config) return;
       const snap = snapshotFromClip(clip, config, {
@@ -382,8 +436,112 @@ export default function App() {
       setSeed(snap.seed);
       setQuality(snap.quality);
     },
-    [config],
+    [config, selectClipId],
   );
+
+  // Hydrate composer from `?id=` once clips+config are ready; ignore missing ids.
+  useEffect(() => {
+    if (urlClipHydratedRef.current || !config || !clipsReady) return;
+    const fromUrl = clipIdFromUrl();
+    urlClipHydratedRef.current = true;
+    if (!fromUrl) return;
+
+    async function openFromUrl(clipId: string) {
+      let clip = clips.find((c) => c.id === clipId);
+      if (!clip) {
+        // May live in another project — search the full library once.
+        const r = await fetch(`${API}/api/clips?all_projects=true`);
+        if (r.ok) {
+          const data = await r.json();
+          const all = (data.clips ?? []) as Clip[];
+          clip = all.find((c) => c.id === clipId);
+          if (clip?.project_id && clip.project_id !== activeProjectId) {
+            await fetch(`${API}/api/projects/${clip.project_id}/activate`, { method: "POST" });
+            setActiveProjectId(clip.project_id);
+            setProjects((prev) =>
+              prev.map((p) => ({ ...p, active: p.id === clip!.project_id })),
+            );
+            setClips(all.filter((c) => (c.project_id || clip!.project_id) === clip!.project_id));
+          }
+        }
+      }
+      if (clip?.video_url) applyClipSelection(clip);
+      else selectClipId(null);
+    }
+
+    void openFromUrl(fromUrl);
+  }, [config, clips, clipsReady, applyClipSelection, selectClipId, activeProjectId]);
+
+  async function loadProjectClips() {
+    const next = await fetchClips();
+    setClips(next);
+    return next;
+  }
+
+  async function switchProject(projectId: string) {
+    const r = await fetch(`${API}/api/projects/${projectId}/activate`, { method: "POST" });
+    if (!r.ok) throw new Error("Failed to switch project");
+    const data = await r.json();
+    setProjects((data.projects ?? []) as Project[]);
+    setActiveProjectId(data.active_project_id ?? projectId);
+    selectClipId(null);
+    setChainId(null);
+    setBusy(false);
+    setProgress(null);
+    setError(null);
+    await loadProjectClips();
+  }
+
+  async function createProject() {
+    const r = await fetch(`${API}/api/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!r.ok) throw new Error("Failed to create project");
+    const data = await r.json();
+    setProjects((data.projects ?? []) as Project[]);
+    setActiveProjectId(data.active_project_id ?? data.project?.id ?? null);
+    selectClipId(null);
+    setChainId(null);
+    setPrompt("");
+    setClipMultiplier(1);
+    setBusy(false);
+    setProgress(null);
+    setError(null);
+    setImagePath(null);
+    setImageName(null);
+    setEndImagePath(null);
+    setEndImageName(null);
+    setRefs([]);
+    setSelectedCastIds([]);
+    setClips([]);
+  }
+
+  async function renameProject(projectId: string, name: string) {
+    const r = await fetch(`${API}/api/projects/${projectId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (!r.ok) throw new Error("Failed to rename project");
+    const data = await r.json();
+    setProjects((data.projects ?? []) as Project[]);
+  }
+
+  async function deleteProject(projectId: string) {
+    const r = await fetch(`${API}/api/projects/${projectId}`, { method: "DELETE" });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(typeof err.detail === "string" ? err.detail : "Failed to delete project");
+    }
+    const data = await r.json();
+    setProjects((data.projects ?? []) as Project[]);
+    setActiveProjectId(data.active_project_id ?? null);
+    selectClipId(null);
+    setChainId(null);
+    await loadProjectClips();
+  }
 
   function applyLoraHints(preset: LoraPreset) {
     if (preset.steps) setNumSteps(preset.steps);
@@ -820,27 +978,10 @@ export default function App() {
   }
 
   async function startNewProject() {
-    setClips((prev) => {
-      revokeBlobVideoUrls(prev);
-      return [];
-    });
-    setChainId(null);
-    setSelectedClipId(null);
-    setPrompt("");
-    setClipMultiplier(1);
-    setBusy(false);
-    setProgress(null);
-    setError(null);
-    setImagePath(null);
-    setImageName(null);
-    setEndImagePath(null);
-    setEndImageName(null);
-    setRefs([]);
-    setSelectedCastIds([]);
     try {
-      await fetch(`${API}/api/session/clear`, { method: "POST" });
+      await createProject();
     } catch (err) {
-      console.warn("Session clear failed", err);
+      setError(String(err));
     }
   }
 
@@ -850,7 +991,7 @@ export default function App() {
       revokeClipBlob(clip);
       return prev.filter((c) => c.id !== clip.id);
     });
-    if (selectedClipId === clip.id) setSelectedClipId(null);
+    if (selectedClipId === clip.id) selectClipId(null);
     setRefs((prev) =>
       prev.filter((r) => r.path !== clip.path && r.path !== clip.filename && !r.path.endsWith(`/${clip.filename}`)),
     );
@@ -1056,7 +1197,7 @@ export default function App() {
           const clipId = String(msg.clip_id ?? "");
           fetchClips(runChainId).then((chainClips) => {
             setClips((prev) => replaceChainClips(prev, runChainId, chainClips));
-            setSelectedClipId(pickPlaybackClip(chainClips, runChainId) ?? clipId ?? null);
+            selectClipId(pickPlaybackClip(chainClips, runChainId) ?? clipId ?? null);
           });
         }
         if (msg.type === "run_cancelled") {
@@ -1094,7 +1235,7 @@ export default function App() {
     }
     const data = await r.json();
     setChainId(data.chain_id);
-    setSelectedClipId(null);
+    selectClipId(null);
     setProgress(
       data.started_immediately
         ? { phase: "starting", message: "Starting…" }
@@ -1154,6 +1295,7 @@ export default function App() {
       loras: loraPresets
         .filter((p) => opts.loraPresetIds.includes(p.id))
         .map((p) => ({ id: p.id, spec: p.spec, scale: p.scale })),
+      project_id: activeProjectId || undefined,
     };
     if (res?.render_width) body.render_width = res.render_width;
     if (res?.render_height) body.render_height = res.render_height;
@@ -1272,9 +1414,15 @@ export default function App() {
               Models
             </button>
           )}
-          <button type="button" className="btn-secondary" onClick={() => void startNewProject()}>
-            New project
-          </button>
+          <ProjectSwitcher
+            projects={projects}
+            activeProjectId={activeProjectId}
+            disabled={busy}
+            onSelect={(id) => void switchProject(id).catch((e) => setError(String(e)))}
+            onCreate={() => void startNewProject()}
+            onRename={(id, name) => void renameProject(id, name).catch((e) => setError(String(e)))}
+            onDelete={(id) => void deleteProject(id).catch((e) => setError(String(e)))}
+          />
           <span className={`status-dot ${serverOk ? "ok" : "off"}`} title={endpointLabel} />
           {serverOk ? "Server connected" : "Server offline"}
         </div>

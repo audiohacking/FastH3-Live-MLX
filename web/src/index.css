@@ -325,9 +325,167 @@ body {
 .header-status {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   font-size: 0.8rem;
   color: var(--muted);
+}
+
+.project-switcher {
+  position: relative;
+}
+
+.project-switcher__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 5px 10px;
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  background: var(--panel, #161616);
+  color: var(--text, #eee);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.project-switcher__trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.project-switcher__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-switcher__chev {
+  opacity: 0.6;
+  font-size: 0.7rem;
+}
+
+.project-switcher__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 240px;
+  padding: 6px;
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  background: var(--panel, #161616);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.project-switcher__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+}
+
+.project-switcher__row.is-active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.project-switcher__item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-switcher__item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.project-switcher__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-switcher__meta {
+  flex-shrink: 0;
+  opacity: 0.45;
+  font-variant-numeric: tabular-nums;
+}
+
+.project-switcher__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding-right: 4px;
+}
+
+.project-switcher__icon {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted, #888);
+  font: inherit;
+  cursor: pointer;
+}
+
+.project-switcher__icon:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text, #eee);
+}
+
+.project-switcher__icon--danger:hover:not(:disabled) {
+  background: rgba(220, 60, 60, 0.2);
+  color: #f88;
+}
+
+.project-switcher__icon:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.project-switcher__rename {
+  flex: 1;
+  margin: 2px 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border, #444);
+  border-radius: 4px;
+  background: #0d0d0d;
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.project-switcher__new {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px;
+  border: 0;
+  border-top: 1px solid var(--border, #333);
+  border-radius: 0 0 6px 6px;
+  background: transparent;
+  color: var(--text, #eee);
+  font: inherit;
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-switcher__new:hover {
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .status-dot {

@@ -117,6 +117,15 @@ class ClipRecord:
     autoconcat: Optional[bool] = None
     quality: Optional[str] = None
     loras: Optional[list[dict[str, Any]]] = None
+    project_id: Optional[str] = None
+
+
+@dataclass
+class ProjectRecord:
+    id: str
+    name: str
+    created_at: str
+    updated_at: str = ""
 
 
 @dataclass
@@ -169,31 +178,174 @@ class AppState:
         self.user_data_path = self.output_dir / USER_DATA_FILE
         self.presets: list[dict[str, Any]] = []
         self.cast_members: list[dict[str, Any]] = []
+        self.projects: dict[str, ProjectRecord] = {}
+        self.active_project_id: str | None = None
         self._load_user_data()
 
-    # ── User data (presets + cast) persistence ───────────────────────────────
-    # Stored separately from the generation index so presets/cast survive
-    # server restarts and are not wiped by session clear.
+    # ── User data (presets + cast + projects) persistence ────────────────────
+    # Stored separately from the generation index so presets/cast/projects
+    # survive server restarts and are not wiped by session clear.
 
     def _load_user_data(self) -> None:
         try:
             if not self.user_data_path.is_file():
+                self.ensure_projects()
                 return
             data = json.loads(self.user_data_path.read_text(encoding="utf-8"))
             self.presets = data.get("presets", []) or []
             self.cast_members = data.get("cast", []) or []
-        except (json.JSONDecodeError, OSError):
+            self.projects = {}
+            for raw in data.get("projects", []) or []:
+                if not isinstance(raw, dict) or not raw.get("id"):
+                    continue
+                pid = str(raw["id"])
+                self.projects[pid] = ProjectRecord(
+                    id=pid,
+                    name=str(raw.get("name") or "Untitled").strip() or "Untitled",
+                    created_at=str(raw.get("created_at") or datetime.now().isoformat()),
+                    updated_at=str(raw.get("updated_at") or ""),
+                )
+            active = data.get("active_project_id")
+            self.active_project_id = str(active) if active else None
+            self.ensure_projects()
+        except (json.JSONDecodeError, OSError, TypeError, KeyError):
             log.warning("Could not read user data at %s", self.user_data_path)
+            self.ensure_projects()
 
     def _save_user_data(self) -> None:
         try:
             self.output_dir.mkdir(parents=True, exist_ok=True)
-            data = {"presets": self.presets, "cast": self.cast_members}
+            data = {
+                "presets": self.presets,
+                "cast": self.cast_members,
+                "projects": [asdict(p) for p in self.projects.values()],
+                "active_project_id": self.active_project_id,
+            }
             self.user_data_path.write_text(
                 json.dumps(data, indent=2), encoding="utf-8"
             )
         except OSError as exc:
             log.warning("Could not save user data: %s", exc)
+
+    def ensure_projects(self) -> ProjectRecord:
+        """Guarantee at least one project and a valid active_project_id."""
+        if not self.projects:
+            now = datetime.now().isoformat()
+            pid = str(uuid.uuid4())
+            project = ProjectRecord(
+                id=pid, name="Project 1", created_at=now, updated_at=now
+            )
+            self.projects[pid] = project
+            self.active_project_id = pid
+            self._save_user_data()
+            return project
+        if not self.active_project_id or self.active_project_id not in self.projects:
+            self.active_project_id = next(iter(self.projects))
+            self._save_user_data()
+        return self.projects[self.active_project_id]
+
+    def list_projects(self) -> list[dict[str, Any]]:
+        self.ensure_projects()
+        out: list[dict[str, Any]] = []
+        for project in sorted(
+            self.projects.values(), key=lambda p: p.created_at or p.id
+        ):
+            out.append(
+                {
+                    **asdict(project),
+                    "clip_count": len(self.clips_for_project(project.id)),
+                    "active": project.id == self.active_project_id,
+                }
+            )
+        return out
+
+    def create_project(self, name: str | None = None) -> ProjectRecord:
+        self.ensure_projects()
+        now = datetime.now().isoformat()
+        n = len(self.projects) + 1
+        label = (name or "").strip() or f"Project {n}"
+        project = ProjectRecord(
+            id=str(uuid.uuid4()), name=label, created_at=now, updated_at=now
+        )
+        self.projects[project.id] = project
+        self.active_project_id = project.id
+        self._save_user_data()
+        return project
+
+    def rename_project(self, project_id: str, name: str) -> ProjectRecord | None:
+        project = self.projects.get(project_id)
+        if not project:
+            return None
+        label = name.strip()
+        if not label:
+            return None
+        project.name = label
+        project.updated_at = datetime.now().isoformat()
+        self._save_user_data()
+        return project
+
+    def set_active_project(self, project_id: str) -> ProjectRecord | None:
+        project = self.projects.get(project_id)
+        if not project:
+            return None
+        self.active_project_id = project_id
+        project.updated_at = datetime.now().isoformat()
+        self._save_user_data()
+        return project
+
+    def delete_project(self, project_id: str, *, delete_files: bool = True) -> dict[str, Any]:
+        self.ensure_projects()
+        if project_id not in self.projects:
+            return {"ok": False, "error": "not_found"}
+        if len(self.projects) <= 1:
+            return {"ok": False, "error": "last_project"}
+        default_id = next(iter(self.projects))
+        removed = 0
+        for clip_id, clip in list(self.clips.items()):
+            belongs = clip.project_id == project_id or (
+                not clip.project_id and project_id == default_id
+            )
+            if not belongs:
+                continue
+            if delete_files:
+                if self.delete_clip_record(clip_id):
+                    removed += 1
+            else:
+                del self.clips[clip_id]
+                removed += 1
+        del self.projects[project_id]
+        if self.active_project_id == project_id:
+            self.active_project_id = next(iter(self.projects))
+        self.save_index()
+        self._save_user_data()
+        return {
+            "ok": True,
+            "deleted": project_id,
+            "deleted_clips": removed,
+            "active_project_id": self.active_project_id,
+        }
+
+    def clips_for_project(self, project_id: str | None = None) -> list[ClipRecord]:
+        self.ensure_projects()
+        pid = project_id or self.active_project_id
+        if not pid:
+            return list(self.clips.values())
+        default_id = next(iter(self.projects))
+        out: list[ClipRecord] = []
+        for clip in self.clips.values():
+            if clip.project_id == pid:
+                out.append(clip)
+            elif not clip.project_id and pid == default_id:
+                out.append(clip)
+        return out
+
+    def touch_project(self, project_id: str | None) -> None:
+        if not project_id:
+            return
+        project = self.projects.get(project_id)
+        if project:
+            project.updated_at = datetime.now().isoformat()
+            self._save_user_data()
 
     def is_generation_active(self) -> bool:
         return self._active_run_id is not None
@@ -269,6 +421,7 @@ class AppState:
     def load_index(self) -> None:
         path = self.output_dir / INDEX_FILE
         if not path.exists():
+            self.ensure_projects()
             return
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -282,6 +435,16 @@ class AppState:
                 )
         except (json.JSONDecodeError, TypeError, KeyError):
             pass
+        # Assign legacy clips (no project_id) to the oldest project.
+        self.ensure_projects()
+        default_id = next(iter(self.projects))
+        migrated = False
+        for clip in self.clips.values():
+            if not clip.project_id:
+                clip.project_id = default_id
+                migrated = True
+        if migrated:
+            self.save_index()
 
     def save_index(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -324,31 +487,23 @@ class AppState:
         return removed
 
     def clear_session(self) -> dict[str, int]:
+        """Clear clips in the active project only (other projects stay intact)."""
+        self.ensure_projects()
+        active = self.active_project_id
         deleted_files = 0
-        seen: set[Path] = set()
-        for clip in list(self.clips.values()):
-            if clip.filename:
-                path = self.output_dir / clip.filename
-                if path.is_file() and path not in seen:
-                    try:
-                        path.unlink()
-                        deleted_files += 1
-                        seen.add(path)
-                    except OSError as exc:
-                        log.warning("Could not delete clip file %s: %s", path, exc)
-        for path in self.output_dir.glob("*.mp4"):
-            if path.is_file() and path not in seen:
-                try:
-                    path.unlink()
-                    deleted_files += 1
-                except OSError:
-                    pass
-        clip_count = len(self.clips)
-        self.clips.clear()
-        self.runs.clear()
-        self.event_queues.clear()
+        deleted_clips = 0
+        for clip in list(self.clips_for_project(active)):
+            if self.delete_clip_record(clip.id):
+                deleted_clips += 1
+                deleted_files += 1
+        # Drop runs that no longer have any remaining clips in this project.
+        for run_id, run in list(self.runs.items()):
+            if any(cid in self.clips for cid in run.clip_ids):
+                continue
+            del self.runs[run_id]
         self.save_index()
-        return {"deleted_clips": clip_count, "deleted_files": deleted_files}
+        self.touch_project(active)
+        return {"deleted_clips": deleted_clips, "deleted_files": deleted_files}
 
     async def emit(self, run_id: str, event: dict[str, Any]) -> None:
         q = self.event_queues.get(run_id)
@@ -850,6 +1005,12 @@ async def _execute_run(state: AppState, run_id: str) -> None:
             merged_path = state.output_dir / merged_name
             concat_mp4s(done_paths, merged_path)
             mid = str(uuid.uuid4())
+            source_project = None
+            for cid in run.clip_ids:
+                src = state.clips.get(cid)
+                if src and src.project_id:
+                    source_project = src.project_id
+                    break
             mclip = ClipRecord(
                 id=mid,
                 prompt=run.prompts[0] + f" (×{len(done_paths)} merged)",
@@ -862,10 +1023,11 @@ async def _execute_run(state: AppState, run_id: str) -> None:
                 status=RunStatus.DONE.value,
                 created_at=datetime.now().isoformat(),
                 bytes=merged_path.stat().st_size if merged_path.is_file() else None,
+                project_id=source_project or state.active_project_id,
                 **{
                     k: v
                     for k, v in _clip_settings_from_body(body).items()
-                    if k in ClipRecord.__dataclass_fields__
+                    if k in ClipRecord.__dataclass_fields__ and k != "project_id"
                 },
             )
             state.clips[mid] = mclip
@@ -1442,12 +1604,81 @@ def create_app(
         return {"ok": True, "deleted": cast_id}
 
     @app.get("/api/clips")
-    async def list_clips(chain_id: Optional[str] = None):
-        clips = list(state.clips.values())
-        if chain_id:
-            clips = [c for c in clips if c.chain_id == chain_id]
+    async def list_clips(
+        chain_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        all_projects: bool = False,
+    ):
+        state.ensure_projects()
+        if all_projects:
+            clips = list(state.clips.values())
+        elif chain_id:
+            clips = [c for c in state.clips.values() if c.chain_id == chain_id]
+        else:
+            clips = state.clips_for_project(project_id)
         clips.sort(key=lambda c: c.created_at)
-        return {"clips": [_clip_for_api(state, c) for c in clips]}
+        return {
+            "clips": [_clip_for_api(state, c) for c in clips],
+            "project_id": project_id or state.active_project_id,
+        }
+
+    @app.get("/api/projects")
+    async def list_projects():
+        state.ensure_worker()
+        return {
+            "projects": state.list_projects(),
+            "active_project_id": state.active_project_id,
+        }
+
+    @app.post("/api/projects")
+    async def create_project(body: dict[str, Any] = None):  # type: ignore[assignment]
+        payload = body or {}
+        project = state.create_project(str(payload.get("name") or "") or None)
+        return {
+            "ok": True,
+            "project": asdict(project),
+            "projects": state.list_projects(),
+            "active_project_id": state.active_project_id,
+        }
+
+    @app.patch("/api/projects/{project_id}")
+    async def rename_project(project_id: str, body: dict[str, Any]):
+        name = str(body.get("name") or "").strip()
+        if not name:
+            raise HTTPException(400, "name is required")
+        project = state.rename_project(project_id, name)
+        if not project:
+            raise HTTPException(404, "Project not found")
+        return {
+            "ok": True,
+            "project": asdict(project),
+            "projects": state.list_projects(),
+            "active_project_id": state.active_project_id,
+        }
+
+    @app.post("/api/projects/{project_id}/activate")
+    async def activate_project(project_id: str):
+        project = state.set_active_project(project_id)
+        if not project:
+            raise HTTPException(404, "Project not found")
+        return {
+            "ok": True,
+            "project": asdict(project),
+            "projects": state.list_projects(),
+            "active_project_id": state.active_project_id,
+        }
+
+    @app.delete("/api/projects/{project_id}")
+    async def delete_project(project_id: str):
+        result = state.delete_project(project_id, delete_files=True)
+        if not result.get("ok"):
+            err = result.get("error")
+            if err == "not_found":
+                raise HTTPException(404, "Project not found")
+            if err == "last_project":
+                raise HTTPException(400, "Cannot delete the last project")
+            raise HTTPException(400, str(err or "delete failed"))
+        return {**result, "projects": state.list_projects()}
 
     @app.post("/api/session/clear")
     async def clear_session():
@@ -1566,6 +1797,10 @@ def create_app(
         base_index = len(existing)
         run_id = str(uuid.uuid4())
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        state.ensure_projects()
+        project_id = str(body.get("project_id") or state.active_project_id or "")
+        if project_id and project_id not in state.projects:
+            project_id = state.active_project_id or next(iter(state.projects))
         clip_ids: list[str] = []
         for i, p in enumerate(prompts):
             clip_id = str(uuid.uuid4())
@@ -1582,14 +1817,16 @@ def create_app(
                 mode=ui_mode,
                 status=RunStatus.QUEUED.value,
                 created_at=datetime.now().isoformat(),
+                project_id=project_id,
                 **{
                     k: v
                     for k, v in settings.items()
-                    if k in ClipRecord.__dataclass_fields__
+                    if k in ClipRecord.__dataclass_fields__ and k != "project_id"
                 },
             )
             state.clips[clip_id] = clip
             clip_ids.append(clip_id)
+        state.touch_project(project_id)
 
         run = RunRecord(
             id=run_id,

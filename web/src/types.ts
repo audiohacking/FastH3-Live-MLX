@@ -80,6 +80,7 @@ export interface Clip {
   mode: string;
   status: string;
   created_at: string;
+  project_id?: string;
   elapsed_s?: number;
   bytes?: number;
   error?: string;
