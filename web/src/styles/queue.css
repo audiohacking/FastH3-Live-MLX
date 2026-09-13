@@ -1,0 +1,258 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Scene Queue Styles
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.scene-queue {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+}
+
+.scene-queue__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.scene-queue__title {
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.scene-queue__count {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.scene-queue__empty {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  padding: var(--space-6) var(--space-4);
+  margin: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Scene Queue List
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.scene-queue__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.scene-queue__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.scene-queue__item[draggable="true"] {
+  cursor: grab;
+}
+
+.scene-queue__item[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.scene-queue__item:hover {
+  border-color: var(--border-hover);
+}
+
+.scene-queue__item--generating {
+  border-color: var(--accent-color);
+  background: var(--accent-soft);
+}
+
+.scene-queue__item--done {
+  border-color: var(--success-color);
+  opacity: 0.7;
+}
+
+.scene-queue__item--failed {
+  border-color: var(--error-color);
+}
+
+.scene-queue__item--cancelled {
+  opacity: 0.5;
+}
+
+.scene-queue__item-number {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+}
+
+.scene-queue__item-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.scene-queue__item-prompt {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scene-queue__item-meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.scene-queue__item-status {
+  flex-shrink: 0;
+  font-size: 1.25rem;
+}
+
+.scene-queue__item-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.scene-queue__item-error {
+  font-size: var(--font-size-xs);
+  color: var(--error-color);
+  cursor: help;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Scene Queue Buttons
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.scene-queue__btn {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.scene-queue__btn:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
+.scene-queue__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.scene-queue__btn--run {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: white;
+}
+
+.scene-queue__btn--run:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: white;
+}
+
+.scene-queue__btn--remove {
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-tertiary);
+}
+
+.scene-queue__btn--remove:hover:not(:disabled) {
+  color: var(--error-color);
+  border-color: var(--error-color);
+}
+
+.scene-queue__btn--edit {
+  padding: var(--space-1) var(--space-2);
+}
+
+.scene-queue__btn--clear {
+  color: var(--text-tertiary);
+}
+
+.scene-queue__btn--clear:hover:not(:disabled) {
+  color: var(--error-color);
+}
+
+.scene-queue__actions {
+  display: flex;
+  gap: var(--space-3);
+  justify-content: flex-end;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Add to Queue Button
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.add-to-queue-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+}
+
+.add-to-queue-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.add-to-queue-btn:hover:not(:disabled) {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  background: var(--accent-soft);
+}
+
+.add-to-queue-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Responsive
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 720px) {
+  .scene-queue__actions {
+    flex-direction: column;
+  }
+
+  .scene-queue__btn--run,
+  .scene-queue__btn--clear {
+    width: 100%;
+    justify-content: center;
+  }
+}

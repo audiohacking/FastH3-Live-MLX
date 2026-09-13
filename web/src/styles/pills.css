@@ -1,0 +1,405 @@
+/*
+ * Pill Controls Stylesheet
+ * Grouped pill-style option selectors with visual dividers
+ */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Pill Row - Container for multiple pill groups
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: flex-end;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Pill Group - Groups related controls with optional label
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.pill-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.pill-group__label {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-muted);
+  letter-spacing: 0.04em;
+}
+
+.pill-group__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Pill Select - Radio-button style selector
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.pill-select {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.pill-select__label {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-muted);
+  letter-spacing: 0.04em;
+}
+
+.pill-select__options {
+  display: inline-flex;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  gap: var(--pill-gap);
+}
+
+.pill-option {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--pill-height);
+  padding: 0 var(--pill-padding-x);
+  border: none;
+  border-radius: calc(var(--radius-md) - 2px);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  white-space: nowrap;
+}
+
+.pill-option:hover:not(:disabled) {
+  background: var(--color-surface);
+}
+
+.pill-option--active {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.pill-option:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Divider between options */
+.pill-option--has-divider::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--pill-gap) * -0.5 - var(--pill-divider-width) / 2);
+  top: 6px;
+  bottom: 6px;
+  width: var(--pill-divider-width);
+  background: var(--pill-divider-color);
+}
+
+.pill-option--active::before,
+.pill-option--active + .pill-option::before {
+  background: transparent;
+}
+
+/* Compact variant */
+.pill-select--compact .pill-option {
+  padding: 0 var(--space-3);
+  font-size: var(--font-size-sm);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Pill Divider - Visual separator between groups
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.pill-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--color-border);
+  flex-shrink: 0;
+}
+
+.pill-divider--vertical {
+  width: 100%;
+  height: 1px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Pill Number Input
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.pill-number {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.pill-number__label {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-muted);
+  letter-spacing: 0.04em;
+}
+
+.pill-number__input {
+  height: var(--pill-height);
+  width: 64px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-base);
+  text-align: center;
+}
+
+.pill-number__input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.pill-number__input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Pill Text Input
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.pill-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.pill-text__label {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-muted);
+  letter-spacing: 0.04em;
+}
+
+.pill-text__input {
+  height: var(--pill-height);
+  min-width: 80px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-base);
+}
+
+.pill-text__input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.pill-text__input::placeholder {
+  color: var(--color-muted);
+}
+
+.pill-text__input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Turbo Toggle
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.turbo-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--pill-height);
+  padding: 0 var(--pill-padding-x);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.turbo-toggle:hover:not(:disabled) {
+  border-color: var(--turbo-color);
+  background: var(--turbo-color-soft);
+}
+
+.turbo-toggle--active {
+  border-color: var(--turbo-color);
+  background: var(--turbo-color-soft);
+  color: var(--turbo-color-dark);
+}
+
+.turbo-toggle--active:hover:not(:disabled) {
+  background: var(--turbo-color);
+  color: white;
+}
+
+.turbo-toggle--loading {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.turbo-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.turbo-toggle__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.turbo-toggle__icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.turbo-toggle--active .turbo-toggle__icon {
+  color: var(--turbo-color);
+}
+
+.turbo-toggle__spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(0, 0, 0, 0.15);
+  border-top-color: var(--turbo-color);
+  border-radius: 50%;
+  animation: turbo-spin 0.8s linear infinite;
+}
+
+@keyframes turbo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.turbo-toggle__label {
+  white-space: nowrap;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Turbo Control Container (toggle + tier selector)
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.turbo-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.turbo-tiers {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+}
+
+.turbo-tier {
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.turbo-tier:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.turbo-tier--active {
+  background: var(--turbo-color);
+  color: white;
+}
+
+.turbo-tier--active:hover:not(:disabled) {
+  background: var(--turbo-color-dark);
+  color: white;
+}
+
+.turbo-tier:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Responsive Adjustments
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * App-specific pill row variants
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.pills-main-row {
+  margin-top: var(--space-5);
+}
+
+.pills-params-row {
+  margin-top: var(--space-4);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Responsive Adjustments
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 720px) {
+  .pill-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pill-group__controls {
+    flex-wrap: wrap;
+  }
+
+  .pill-select__options {
+    flex-wrap: wrap;
+  }
+
+  .pill-option {
+    flex: 1;
+    min-width: fit-content;
+  }
+
+  .pills-main-row .turbo-toggle {
+    align-self: flex-start;
+  }
+
+  .pills-params-row {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .pills-params-row .pill-divider {
+    display: none;
+  }
+}

@@ -1,0 +1,370 @@
+export interface LoraPreset {
+  id: string;
+  label: string;
+  spec: string;
+  scale: number;
+  custom?: boolean;
+  cached?: boolean;
+  compatible?: boolean;
+  category?: string;
+  trigger?: string;
+  source_url?: string;
+  steps?: number;
+  layers?: number;
+  reuse?: number;
+  guidance?: string | null;
+}
+
+export interface QualityPreset {
+  id: string;
+  label: string;
+  steps?: number;
+  layers?: number;
+  reuse?: number;
+  token_reduction?: boolean;
+  guidance?: string | null;
+}
+
+export interface PresetOption {
+  id: string;
+  label: string;
+  width?: number;
+  height?: number;
+  render_width?: number;
+  render_height?: number;
+  seconds?: number;
+  num_frames?: number;
+  guidance?: string;
+  aspect?: string;
+  group?: string;
+}
+
+export interface Config {
+  server_connected: boolean;
+  server_url: string;
+  engine_ok?: boolean;
+  engine_error?: string | null;
+  h3_bin?: string;
+  model_dir?: string;
+  ram_gb?: number | null;
+  recommend_ssd_streaming?: boolean;
+  metal4?: boolean;
+  quality_presets: QualityPreset[];
+  lora_presets?: LoraPreset[];
+  resolution_presets: PresetOption[];
+  duration_presets: PresetOption[];
+  generation_modes: { id: string; label: string }[];
+  ref_kinds?: { id: string; label: string; flag: string }[];
+  defaults: {
+    num_frames: number;
+    width: number;
+    height: number;
+    num_steps: number;
+    layers?: number;
+    reuse?: number;
+    fps: number;
+    quality?: string;
+  };
+  model_note: string;
+  clip_multiplier_max?: number;
+  embedded?: boolean;
+  web_url?: string;
+  pyav_available?: boolean;
+}
+
+export interface Clip {
+  id: string;
+  prompt: string;
+  label: string;
+  video_url: string;
+  filename: string;
+  path?: string;
+  chain_id: string;
+  clip_index: number;
+  mode: string;
+  status: string;
+  created_at: string;
+  project_id?: string;
+  elapsed_s?: number;
+  bytes?: number;
+  error?: string;
+  num_frames?: number;
+  width?: number;
+  height?: number;
+  seed?: number;
+  num_steps?: number;
+  layers?: number;
+  reuse?: number;
+  duration_seconds?: number;
+  clip_count?: number;
+  autocontinue?: boolean;
+  autoconcat?: boolean;
+  quality?: string;
+  loras?: { id?: string; spec?: string; scale?: number }[];
+  recipe?: ClipRecipe;
+}
+
+export interface ClipRecipeRef {
+  kind: RefKind;
+  path: string;
+  name?: string;
+  audio_path?: string;
+  audioPath?: string;
+  audio_name?: string;
+  audioName?: string;
+  enabled?: boolean;
+  duration_s?: number;
+  durationS?: number;
+  ref_size?: RefSize;
+  refSize?: RefSize;
+  source?: "upload" | "cast" | "library";
+  cast_id?: string;
+  castId?: string;
+  preview_url?: string;
+  available?: boolean;
+  audio_available?: boolean;
+}
+
+export interface ClipRecipe {
+  composer_prompt?: string;
+  routing?: RoutingMode;
+  mode?: string;
+  refs?: ClipRecipeRef[];
+  image_path?: string | null;
+  image_name?: string | null;
+  end_image_path?: string | null;
+  end_image_name?: string | null;
+  image_path_available?: boolean;
+  end_image_path_available?: boolean;
+  image_path_url?: string;
+  end_image_path_url?: string;
+  selected_cast_ids?: string[];
+  token_reduction?: boolean;
+  ssd_streaming?: boolean;
+  turbo_enabled?: boolean;
+  turbo_tier?: string;
+  lora_preset_ids?: string[];
+  loras?: { id?: string; spec?: string; scale?: number }[];
+  resolution_id?: string;
+  duration_id?: string;
+  quality?: string;
+}
+
+export interface LibraryFrame {
+  id: string;
+  label: string;
+  path: string;
+  image_url: string;
+  filename: string;
+  width?: number;
+  height?: number;
+  source_clip_id?: string;
+  time_s?: number;
+  created_at: string;
+}
+
+export interface ModelProgress {
+  stage?: string;
+  step?: number;
+  total?: number;
+  pct?: number;
+  eta_s?: number;
+  avg_step_s?: number;
+  elapsed_s?: number;
+  label?: string;
+}
+
+export type RefKind = "image" | "silent_video" | "video" | "video_audio" | "audio";
+
+export type RoutingMode = "auto" | "fl2va" | "ref2va";
+export type RefSize = "max" | "match";
+
+export interface ReferenceItem {
+  id: string;
+  kind: RefKind;
+  path: string;
+  name: string;
+  audioPath?: string;
+  audioName?: string;
+  /** When false, the capsule stays on the node but is omitted from compile/generate. */
+  enabled?: boolean;
+  durationS?: number;
+  refSize?: RefSize;
+  previewUrl?: string;
+  source?: "upload" | "cast" | "library";
+  castId?: string;
+}
+
+export interface ProgressState {
+  phase: string;
+  message: string;
+  elapsed_s?: number;
+  kb?: number;
+  stage?: string;
+  step?: number;
+  total?: number;
+  pct?: number;
+  eta_s?: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cast System Types (Phase 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface CastMember {
+  id: string;
+  name: string;
+  description?: string;
+  media: CastMedia[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CastMediaType = "image" | "video" | "audio";
+
+export interface CastMedia {
+  id: string;
+  type: CastMediaType;
+  path: string;
+  thumbnailUrl?: string;
+  label?: string;
+  durationS?: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Preset System Types (Phase 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface GenerationPreset {
+  id: string;
+  name: string;
+  description?: string;
+  mode: string;
+  quality: string;
+  resolutionId: string;
+  durationId: string;
+  numSteps: number;
+  layers: number;
+  reuse: number;
+  loraIds: string[];
+  turboEnabled: boolean;
+  tokenReduction: boolean;
+  ssdStreaming: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Timeline Types (Phase 3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface TimelineClip {
+  id: string;
+  clipId: string;
+  chainId: string;
+  index: number;
+  thumbnailUrl?: string;
+  durationMs: number;
+  prompt: string;
+  status: "pending" | "generating" | "done" | "failed";
+}
+
+export interface TimelineSeam {
+  id: string;
+  beforeClipId: string;
+  afterClipId: string;
+  transitionType: "cut" | "blend";
+  blendDurationMs?: number;
+}
+
+export interface Timeline {
+  id: string;
+  chainId: string;
+  clips: TimelineClip[];
+  seams: TimelineSeam[];
+  totalDurationMs: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reference Scope Types (Phase 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ScopeType = "face" | "object" | "scene" | "style";
+
+export interface ReferenceScope {
+  face: number;    // 0-1 contribution
+  object: number;
+  scene: number;
+  style: number;
+}
+
+export interface ScopedReference extends ReferenceItem {
+  scope?: ReferenceScope;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Turbo Mode Types (Phase 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface TurboState {
+  enabled: boolean;
+  loraSpec: string;
+  steps: number;
+  layers: number;
+  reuse: number;
+  scale: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pill Control Types (Phase 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PillOption<T = string> {
+  id: T;
+  label: string;
+  shortLabel?: string;
+  description?: string;
+  disabled?: boolean;
+}
+
+export interface PillGroup<T = string> {
+  id: string;
+  label: string;
+  options: PillOption<T>[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scene Queue Types (Phase 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type SceneStatus = "pending" | "generating" | "done" | "failed" | "cancelled";
+
+export interface SceneQueueItem {
+  id: string;
+  prompt: string;
+  mode: string;
+  routing?: RoutingMode;
+  selectedCastIds?: string[];
+  quality: string;
+  resolutionId: string;
+  durationId: string;
+  numSteps: number;
+  layers: number;
+  reuse: number;
+  seed: string;
+  loraPresetIds: string[];
+  turboEnabled: boolean;
+  turboTier?: string;
+  refs: ReferenceItem[];
+  imagePath?: string | null;
+  endImagePath?: string | null;
+  clipMultiplier: number;
+  autocontinue: boolean;
+  autoconcat: boolean;
+  tokenReduction: boolean;
+  ssdStreaming: boolean;
+  status: SceneStatus;
+  runId?: string;
+  error?: string;
+  createdAt: string;
+}

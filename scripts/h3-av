@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# PyAV stand-in for the ffmpeg/ffprobe CLI that h3.c posix_spawns.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ -n "${H3_PYTHON:-}" && -x "${H3_PYTHON}" ]]; then
+  PY="$H3_PYTHON"
+elif [[ -x "$ROOT/.venv/bin/python" ]]; then
+  PY="$ROOT/.venv/bin/python"
+else
+  PY="$(command -v python3)"
+fi
+exec "$PY" "$ROOT/h3_av.py" "$@"

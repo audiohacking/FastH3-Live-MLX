@@ -1,0 +1,45 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+
+# OS
+.DS_Store
+
+# Runtime / local outputs
+web_outputs/
+web_uploads/
+tmp/
+logs/
+benchmark_runs/
+
+# Local MiniMax-H3 / FastH3 weights (gitignored so checkpoints stay on disk)
+models/*
+!models/README.md
+
+web/node_modules/
+web/dist/
+
+# Runtime ffmpeg/ffprobe names for the PyAV shim
+scripts/.h3-av-bin/
+
+# h3.c build artifacts (submodule still tracked)
+third_party/h3.c/h3
+third_party/h3.c/*.o
+third_party/h3.c/*.air
+third_party/h3.c/*.metallib
+
+# Local agent tooling caches (memories, settings, hooks) — not project source
+.claude/
+.serena/
+web/.claude/

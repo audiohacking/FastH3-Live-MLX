@@ -1,0 +1,136 @@
+/* Compact Continuity-style disclosure under the prompt */
+
+.wtmr {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+}
+
+.wtmr--disabled {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.wtmr__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wtmr__toggle:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+.wtmr__chevron {
+  display: inline-block;
+  width: 10px;
+  font-size: 0.65rem;
+  line-height: 1;
+  transform: rotate(0deg);
+}
+
+.wtmr__toggle.is-open .wtmr__chevron {
+  transform: rotate(90deg);
+}
+
+.wtmr__count {
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-dark);
+  font-size: 0.6rem;
+  line-height: 14px;
+  text-align: center;
+}
+
+.wtmr__none {
+  margin: 0;
+  font-size: 0.75rem;
+  font-style: italic;
+  color: var(--color-muted);
+}
+
+.wtmr__tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wtmr__token {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.wtmr__token--picture { background: #3b6fd4; }
+.wtmr__token--video { background: #7a5ce0; }
+.wtmr__token--audio { background: #2f9e6e; }
+
+.wtmr__token-name {
+  font-weight: 400;
+  opacity: 0.85;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wtmr__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding-top: 4px;
+}
+
+.wtmr__body section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wtmr__body h4 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-muted);
+}
+
+.wtmr__body p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-text);
+}
+
+.wtmr__pre {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border-radius: 6px;
+  padding: 8px 10px;
+}

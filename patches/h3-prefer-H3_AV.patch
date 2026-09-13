@@ -1,0 +1,18 @@
+--- a/h3_ffmpeg.c
++++ b/h3_ffmpeg.c
+@@ -15,12 +15,16 @@
+ extern char **environ;
+ 
+ static const char *ffmpeg_program(void) {
++    const char *av = getenv("H3_AV");
++    if (av && *av) return av;
+     const char *override = getenv("H3_FFMPEG");
+     return override && *override ? override : "ffmpeg";
+ }
+ 
+ static const char *ffprobe_program(void) {
++    const char *av = getenv("H3_AV");
++    if (av && *av) return av;
+     const char *override = getenv("H3_FFPROBE");
+     return override && *override ? override : "ffprobe";
+ }

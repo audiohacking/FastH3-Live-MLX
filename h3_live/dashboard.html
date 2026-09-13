@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FastH3 Live</title>
+  <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.8.0/dist/mpegts.min.js"></script>
+  <style>
+    :root {
+      --bg: #12140f;
+      --panel: #1a1e17;
+      --ink: #e8ecd9;
+      --muted: #9aa38a;
+      --line: #2c3326;
+      --accent: #c4f042;
+      --warn: #f0a842;
+      --bad: #f05242;
+      --mono: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
+      --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+    body {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 100%;
+      background:
+        radial-gradient(ellipse 80% 50% at 10% -10%, #24301a 0%, transparent 55%),
+        var(--bg);
+    }
+    header {
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      padding: 0.85rem 1.25rem; border-bottom: 1px solid var(--line);
+    }
+    header h1 { margin: 0; font-size: 1.05rem; letter-spacing: 0.04em; font-weight: 650; }
+    header h1 span { color: var(--accent); }
+    .pill {
+      font-family: var(--mono); font-size: 0.75rem; color: var(--muted);
+      border: 1px solid var(--line); padding: 0.25rem 0.55rem; border-radius: 999px;
+    }
+    .pill.on { color: var(--accent); border-color: #3d5a18; }
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.9fr);
+      gap: 0; min-height: 0;
+    }
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    }
+    .stage {
+      display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line);
+    }
+    .video-wrap {
+      position: relative; background: #0a0b08; aspect-ratio: 1 / 1; max-height: min(70vh, 720px);
+      margin: 1rem; border: 1px solid var(--line); overflow: hidden;
+    }
+    video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+    .wait {
+      position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+      padding: 1.5rem; color: var(--muted); font-family: var(--mono); font-size: 0.85rem;
+      pointer-events: none; background: rgba(0,0,0,0.35);
+    }
+    .wait.hide { display: none; }
+    .controls {
+      display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0 1rem 1rem; align-items: center;
+    }
+    button {
+      font: 600 0.85rem var(--sans); color: var(--bg); background: var(--accent);
+      border: 0; padding: 0.55rem 0.9rem; border-radius: 4px; cursor: pointer;
+    }
+    button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .side {
+      display: grid; grid-template-rows: auto 1fr; min-height: 0; background: var(--panel);
+    }
+    .metrics {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; padding: 1rem;
+      border-bottom: 1px solid var(--line);
+    }
+    .metric {
+      border: 1px solid var(--line); padding: 0.55rem 0.65rem; border-radius: 4px;
+    }
+    .metric .k { display: block; font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+    .metric .v { font-family: var(--mono); font-size: 0.92rem; margin-top: 0.2rem; }
+    .metric .v.warn { color: var(--warn); }
+    .metric .v.bad { color: var(--bad); }
+    .logs-head {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 0.65rem 1rem; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 0.75rem;
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    #logs {
+      margin: 0; padding: 0.75rem 1rem 1.25rem; overflow: auto; min-height: 0;
+      font-family: var(--mono); font-size: 0.72rem; line-height: 1.45; white-space: pre-wrap;
+      color: #c5ccb6;
+    }
+    #logs .err { color: var(--bad); }
+    #logs .warn { color: var(--warn); }
+    .meta { color: var(--muted); font-size: 0.8rem; padding: 0 1rem 0.5rem; font-family: var(--mono); }
+    .prompt-box {
+      margin: 0 1rem 1rem; padding: 0.75rem; border: 1px solid var(--line); border-radius: 4px;
+      display: grid; gap: 0.55rem;
+    }
+    .prompt-box label { font-size: 0.72rem; color: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; }
+    .prompt-modes { display: flex; gap: 1rem; font-size: 0.85rem; }
+    .prompt-modes label { text-transform: none; letter-spacing: 0; color: var(--ink); display: flex; gap: 0.35rem; align-items: center; cursor: pointer; }
+    #promptText {
+      width: 100%; min-height: 6.5rem; resize: vertical; background: #0a0b08; color: var(--ink);
+      border: 1px solid var(--line); border-radius: 4px; padding: 0.55rem 0.65rem;
+      font-family: var(--mono); font-size: 0.72rem; line-height: 1.4;
+    }
+    #promptText:disabled { opacity: 0.45; }
+    .prompt-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+    .prompt-note { font-family: var(--mono); font-size: 0.7rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>FastH3 <span>Live</span></h1>
+    <div class="pill" id="conn">connecting…</div>
+  </header>
+  <main>
+    <section class="stage">
+      <div class="video-wrap">
+        <video id="video" muted playsinline></video>
+        <div class="wait" id="wait">Open stream to start generation.<br/>First clip ~40s cold.</div>
+      </div>
+      <div class="controls">
+        <button id="btnPlay" type="button">Play stream</button>
+        <button id="btnStop" class="secondary" type="button" disabled>Stop</button>
+        <button id="btnPauseGen" class="secondary" type="button">Pause gen</button>
+        <button id="btnCancel" class="secondary" type="button">Cancel job</button>
+        <button id="btnMute" class="secondary" type="button">Unmute</button>
+      </div>
+      <div class="meta" id="clipMeta">—</div>
+      <div class="prompt-box">
+        <label>Next clip prompt</label>
+        <div class="prompt-modes">
+          <label><input type="radio" name="promptMode" value="random" checked /> Random pool</label>
+          <label><input type="radio" name="promptMode" value="custom" /> Custom</label>
+        </div>
+        <textarea id="promptText" disabled placeholder="Paste a full H3 prompt (Context-IR). Use {NAME} / {NAME2} for cast slots."></textarea>
+        <div class="prompt-actions">
+          <button id="btnApplyPrompt" type="button">Apply to next clip</button>
+          <span class="prompt-note" id="promptNote">—</span>
+        </div>
+      </div>
+    </section>
+    <aside class="side">
+      <div class="metrics" id="metrics"></div>
+      <div class="logs-head"><span>Logs</span><span id="logCount">0</span></div>
+      <pre id="logs"></pre>
+    </aside>
+  </main>
+  <script>
+    const video = document.getElementById("video");
+    const wait = document.getElementById("wait");
+    const conn = document.getElementById("conn");
+    const logsEl = document.getElementById("logs");
+    const metricsEl = document.getElementById("metrics");
+    const clipMeta = document.getElementById("clipMeta");
+    const btnPlay = document.getElementById("btnPlay");
+    const btnStop = document.getElementById("btnStop");
+    const btnPauseGen = document.getElementById("btnPauseGen");
+    const btnCancel = document.getElementById("btnCancel");
+    const btnMute = document.getElementById("btnMute");
+    const promptText = document.getElementById("promptText");
+    const promptNote = document.getElementById("promptNote");
+    const btnApplyPrompt = document.getElementById("btnApplyPrompt");
+    const promptModeInputs = () => [...document.querySelectorAll('input[name="promptMode"]')];
+
+    let player = null;
+    let pausedGen = false;
+    let lastLogId = 0;
+    let watching = false;
+    let attachTimer = null;
+    let heartbeatTimer = null;
+    let lastStatus = null;
+    const sessionId = (crypto.randomUUID && crypto.randomUUID()) ||
+      ("s" + Math.random().toString(16).slice(2) + Date.now().toString(16));
+
+    function metric(k, v, cls) {
+      return `<div class="metric"><span class="k">${k}</span><span class="v ${cls || ""}">${v}</span></div>`;
+    }
+
+    function vlcHint() {
+      return "VLC: <code>" + location.origin + "/stream.ts</code>";
+    }
+
+    function setPlaying(on) {
+      btnPlay.disabled = on;
+      btnStop.disabled = !on;
+      conn.textContent = on ? "streaming" : "idle";
+      conn.classList.toggle("on", on);
+    }
+
+    async function postControl(action, extra) {
+      await fetch("/api/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, session: sessionId, ...(extra || {}) }),
+      });
+      refreshStatus();
+    }
+
+    function selectedPromptMode() {
+      const el = promptModeInputs().find((i) => i.checked);
+      return el ? el.value : "random";
+    }
+
+    function syncPromptModeUi(mode) {
+      promptModeInputs().forEach((i) => { i.checked = i.value === mode; });
+      promptText.disabled = mode !== "custom";
+    }
+
+    promptModeInputs().forEach((input) => {
+      input.addEventListener("change", () => {
+        promptText.disabled = selectedPromptMode() !== "custom";
+      });
+    });
+
+    btnApplyPrompt.addEventListener("click", async () => {
+      const mode = selectedPromptMode();
+      const text = promptText.value;
+      btnApplyPrompt.disabled = true;
+      try {
+        const r = await fetch("/api/control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "set_prompt", mode, text, session: sessionId }),
+        });
+        const j = await r.json();
+        if (!j.ok) {
+          promptNote.textContent = j.error || "failed";
+          return;
+        }
+        promptNote.textContent = mode === "custom"
+          ? "custom queued for next clip"
+          : "random pool for next clip";
+        refreshStatus();
+      } catch (_) {
+        promptNote.textContent = "apply failed";
+      } finally {
+        btnApplyPrompt.disabled = false;
+      }
+    });
+
+    function destroyPlayer() {
+      if (attachTimer) { clearInterval(attachTimer); attachTimer = null; }
+      if (player) {
+        try { player.pause(); player.unload(); player.detachMediaElement(); player.destroy(); } catch (_) {}
+        player = null;
+      }
+    }
+
+    function stopHeartbeat() {
+      if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    }
+
+    function startHeartbeat() {
+      stopHeartbeat();
+      heartbeatTimer = setInterval(() => {
+        if (!watching) return;
+        fetch("/api/control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "heartbeat", session: sessionId }),
+        }).catch(() => {});
+      }, 5000);
+    }
+
+    function attachMpegts() {
+      if (!watching || player) return;
+      if (typeof mpegts === "undefined" || !mpegts.getFeatureList().mseLivePlayback) {
+        wait.classList.remove("hide");
+        wait.innerHTML = "This browser cannot play live MPEG-TS.<br/>" + vlcHint();
+        return;
+      }
+      wait.classList.remove("hide");
+      wait.textContent = "Attaching live MPEG-TS…";
+      player = mpegts.createPlayer({
+        type: "mpegts",
+        isLive: true,
+        hasVideo: true,
+        // PyAV retime historically declared AAC in the PMT but emitted no/late
+        // audio PES — mpegts.js then waits forever after the video init segment.
+        hasAudio: false,
+        url: location.origin + "/stream.ts",
+      }, {
+        // Worker + aggressive live chase often black-screens low-fps Live.
+        enableWorker: false,
+        enableStashBuffer: true,
+        stashInitialSize: 384,
+        isLive: true,
+        liveBufferLatencyChasing: false,
+        liveSync: false,
+        autoCleanupSourceBuffer: true,
+        fixAudioTimestampGap: true,
+      });
+      player.attachMediaElement(video);
+      player.on(mpegts.Events.ERROR, (type, detail) => {
+        console.error("mpegts error", type, detail);
+        wait.classList.remove("hide");
+        wait.innerHTML = "Player error — retrying…<br/>" + vlcHint();
+        destroyPlayer();
+        if (watching) setTimeout(attachMpegts, 2000);
+      });
+      player.on(mpegts.Events.MEDIA_INFO, () => wait.classList.add("hide"));
+      player.on(mpegts.Events.STATISTICS_INFO, (info) => {
+        if ((info && info.decodedFrames > 0) || video.readyState >= 2) {
+          wait.classList.add("hide");
+        }
+      });
+      video.addEventListener("playing", () => wait.classList.add("hide"));
+      video.addEventListener("loadeddata", () => wait.classList.add("hide"));
+      // If MSE only got init and stalled, surface it instead of spinning forever.
+      setTimeout(() => {
+        if (!watching || !player) return;
+        if (video.readyState < 2 && !wait.classList.contains("hide")) {
+          wait.textContent = "Still waiting for frames…";
+        }
+      }, 8000);
+      player.load();
+      video.muted = true;
+      player.play().catch((err) => console.warn("play()", err));
+      btnMute.textContent = "Unmute";
+    }
+
+    async function startWatch() {
+      if (watching) return;
+      watching = true;
+      setPlaying(true);
+      wait.classList.remove("hide");
+      wait.textContent = "Starting generation… (player attaches after first clip)";
+      await postControl("watch");
+      startHeartbeat();
+      const tryAttach = () => {
+        if (!watching || player) return;
+        if (lastStatus && (lastStatus.media_ready || (lastStatus.viewers || 0) > 0)) {
+          if (attachTimer) { clearInterval(attachTimer); attachTimer = null; }
+          attachMpegts();
+        }
+      };
+      attachTimer = setInterval(tryAttach, 500);
+      tryAttach();
+    }
+
+    async function stopWatch() {
+      watching = false;
+      stopHeartbeat();
+      destroyPlayer();
+      setPlaying(false);
+      wait.classList.remove("hide");
+      wait.innerHTML = "Open stream to start generation.<br/>" + vlcHint();
+      await postControl("unwatch");
+    }
+
+    async function refreshStatus() {
+      try {
+        const r = await fetch("/api/status");
+        const s = await r.json();
+        lastStatus = s;
+        const marginCls = s.margin_s == null ? "" : s.margin_s >= 0 ? "" : "bad";
+        metricsEl.innerHTML = [
+          metric("CPU", s.cpu_pct != null ? `${s.cpu_pct.toFixed(0)}%` : "—"),
+          metric("GPU", s.gpu_pct != null ? `${s.gpu_pct.toFixed(0)}%` : "—"),
+          metric("RAM", s.ram_used_gb != null ? `${s.ram_used_gb.toFixed(1)} / ${s.ram_total_gb.toFixed(0)} GiB` : "—"),
+          metric("h3 RSS", s.h3_rss_gb != null ? `${s.h3_rss_gb.toFixed(1)} GiB` : "idle"),
+          metric("Viewers", `${s.viewers ?? 0} ts · ${s.watchers ?? 0} web`),
+          metric("Last gen", s.last_gen_s != null ? `${s.last_gen_s.toFixed(1)}s` : "—"),
+          metric("Margin", s.margin_s != null ? `${s.margin_s >= 0 ? "+" : ""}${s.margin_s.toFixed(1)}s` : "—", marginCls),
+          metric("Recipe", `${s.width}×${s.height} · ${s.frames}f · ${s.steps} step · ${
+            s.play_fps > 0 ? s.play_fps.toFixed(2) : "…"
+          } fps`),
+          metric("Gen", s.paused ? "paused" : (s.generating ? "running" : "waiting"), s.paused ? "warn" : ""),
+          metric("Chip", s.chip || "—"),
+          metric("Next prompt", s.next_prompt_note || s.prompt_mode || "—"),
+        ].join("");
+        if (typeof s.custom_prompt === "string" && document.activeElement !== promptText) {
+          if (s.prompt_mode === "custom" && s.custom_prompt && promptText.value !== s.custom_prompt) {
+            promptText.value = s.custom_prompt;
+          }
+        }
+        if (s.prompt_mode) syncPromptModeUi(s.prompt_mode);
+        if (s.next_prompt_note) promptNote.textContent = s.next_prompt_note;
+        if (s.pool_scenes && selectedPromptMode() === "random") {
+          promptText.placeholder =
+            `Random pool: ${s.pool_scenes} scenes × cast. Switch to Custom to paste a prompt ({NAME} slots OK).`;
+        }
+        if (watching && !player) {
+          if (s.generating) {
+            wait.textContent = `Generating… GPU ${s.gpu_pct != null ? s.gpu_pct.toFixed(0) + "%" : "…"} · first clip ~40s`;
+          } else if (s.media_ready) {
+            wait.textContent = "Clip ready — attaching player…";
+          }
+        }
+        clipMeta.textContent = s.last_cast
+          ? `clip ${String(s.last_clip).padStart(4, "0")} · scene ${s.last_scene} · ${s.last_cast}`
+          : "waiting for first clip…";
+        pausedGen = !!s.paused;
+        btnPauseGen.textContent = pausedGen ? "Resume gen" : "Pause gen";
+      } catch (_) {}
+    }
+
+    async function refreshLogs() {
+      try {
+        const r = await fetch(`/api/logs?after=${lastLogId}`);
+        const data = await r.json();
+        if (!data.lines || !data.lines.length) return;
+        for (const line of data.lines) {
+          lastLogId = Math.max(lastLogId, line.id);
+          const div = document.createElement("div");
+          if (line.level >= 40) div.className = "err";
+          else if (line.level >= 30) div.className = "warn";
+          div.textContent = `${line.t}  ${line.msg}`;
+          logsEl.appendChild(div);
+        }
+        document.getElementById("logCount").textContent = String(lastLogId);
+        logsEl.scrollTop = logsEl.scrollHeight;
+      } catch (_) {}
+    }
+
+    btnPlay.addEventListener("click", startWatch);
+    btnStop.addEventListener("click", stopWatch);
+    btnMute.addEventListener("click", () => {
+      video.muted = !video.muted;
+      btnMute.textContent = video.muted ? "Unmute" : "Mute";
+    });
+    btnPauseGen.addEventListener("click", () => postControl(pausedGen ? "resume" : "pause"));
+    btnCancel.addEventListener("click", () => postControl("cancel"));
+    window.addEventListener("pagehide", () => {
+      if (!watching) return;
+      stopHeartbeat();
+      navigator.sendBeacon(
+        "/api/control",
+        new Blob(
+          [JSON.stringify({ action: "unwatch", session: sessionId })],
+          { type: "application/json" }
+        )
+      );
+    });
+
+    setPlaying(false);
+    wait.innerHTML = "Open stream to start generation.<br/>" + vlcHint();
+    refreshStatus();
+    refreshLogs();
+    setInterval(refreshStatus, 1500);
+    setInterval(refreshLogs, 1000);
+  </script>
+</body>
+</html>

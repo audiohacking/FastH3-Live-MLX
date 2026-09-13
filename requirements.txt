@@ -1,0 +1,13 @@
+# h3-ws runtime (Python 3.11+, macOS Apple Silicon)
+# Inference is native h3.c — these packages orchestrate the UI, library, and jobs.
+websockets>=12.0
+av>=12.0
+Pillow>=10.0
+numpy>=1.26.0
+huggingface_hub>=0.20.0
+fastapi>=0.109.0
+starlette>=0.35.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+sse-starlette>=1.6.0
+mcp>=1.0.0

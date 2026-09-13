@@ -1,0 +1,23 @@
+{
+  "name": "h3-ws-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5299",
+    "build": "tsc && vite build",
+    "test:compile": "npx --yes tsx src/compile.test.ts && npx --yes tsx src/styleAtlas.test.ts",
+    "preview": "vite preview --port 5299"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.1.0",
+    "typescript": "^7.0.0",
+    "vite": "^8.2.0"
+  }
+}

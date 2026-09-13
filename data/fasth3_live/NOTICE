@@ -1,0 +1,86 @@
+MiniMax H3 is licensed under the MiniMax H3 Community License Agreement,
+Copyright © 2026 MiniMax. All Rights Reserved.
+
+--------------------------------------------------------------------------
+
+FastH3 Live
+Copyright 2026 jacokon
+
+Powered by MiniMax H3.
+
+CONTENTS AND THEIR LICENCES
+---------------------------
+
+This repository contains two kinds of material under two different licences.
+They are not interchangeable.
+
+1. MODEL WEIGHTS -- MiniMax H3 Community License Agreement
+
+   minimax_h3_fl2va_fasth3_dense_pruned_int8_convrot.safetensors
+   minimax_h3_video_vae_w4a8_from_fp16.safetensors
+
+   are Model Derivatives of MiniMax H3 and are distributed under the MiniMax H3
+   Community License Agreement, the full text of which is included in this
+   repository as LICENSE-MiniMax-H3.txt. No additional or different terms are
+   imposed on them. The Apache licence below does NOT apply to these files.
+
+   MODIFICATION NOTICE (License §III.2) for the DiT. This file has been
+   modified from its upstream form. It was built from
+   FastVideo/FastVideo-FastH3-4-step-Preview-v1-Dense-DataFree, itself a
+   DMD2 distillation of MiniMax H3, by:
+
+     - renaming and re-laying-out tensors from the diffusers layout into
+       ComfyUI's MiniMax-H3 layout (Q/K/V fused into one projection; the two
+       halves of the SwiGLU input projection swapped from value-first to
+       gate-first),
+     - rank-reducing the AdaLN modulation projections onto an 8-dimensional
+       SVD basis of the timestep curve, sampled as a 1025-point table, and
+       removing the timestep embedder those projections no longer need,
+     - quantizing the four heavy linear layers per block to INT8 with
+       group-wise ConvRot rotation.
+
+   No weight values were retrained, fine-tuned, or otherwise altered in
+   substance.
+
+   MODIFICATION NOTICE (License §III.2) for the video VAE. This file has been
+   modified from its upstream form. It was built from the MiniMax H3 video VAE
+   in fp16 by quantizing the 144 transformer linear layers of its decoder to
+   asymmetric W4A8 -- 4-bit weights at group size 16, ConvRot group size 256,
+   INT8 activations -- using comfy_kitchen's AsymW4A8Int8Layout. Every other
+   tensor was copied through unchanged. No weight values were retrained or
+   fine-tuned. Measured relative L2 error is 7.31e-2 on sampled layers, and
+   PSNR 37.6 dB against the fp16 decode of an identical latent.
+
+   Both notices are also recorded inside each file's own safetensors metadata
+   under "modification_notice", so they survive being copied out of this
+   repository.
+
+2. EVERYTHING ELSE -- Apache License, Version 2.0
+
+   All source code, the scene library (prompts_scenes.txt), the character
+   pools, the ComfyUI workflow and the custom nodes are original work released
+   under the Apache License, Version 2.0 (see LICENSE).
+
+   h3_characters.json is derived from the `good` section of
+   huggingface.co/datasets/malcolmrey/various,
+   h3-center/known-characters/INDEX.md, and remains subject to that
+   dataset's terms.
+
+TERRITORY
+---------
+
+The MiniMax H3 Community License grants rights only within its "Applicable
+Territory", defined as worldwide EXCLUDING the European Union, the United
+Kingdom, the Republic of Korea and the United States of America. Section V.4
+states that the Works and their Outputs may not be used, reproduced, modified,
+distributed or displayed outside that territory.
+
+If you are in an Excluded Territory, this licence does not authorise you to
+download or use the weight files in this repository.
+
+OUTPUTS
+-------
+
+Generated video of identifiable people is a synthetic likeness. See the
+"Using this responsibly" section of README.md before publishing anything, and
+label generated material as AI-generated.
