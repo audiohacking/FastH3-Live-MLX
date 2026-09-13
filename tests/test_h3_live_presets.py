@@ -61,13 +61,21 @@ class PresetTests(unittest.TestCase):
 
 class EnsembleTests(unittest.TestCase):
     def test_ensemble_only_draw(self) -> None:
-        pool = PromptPool(curated_share=1.0, ensemble_only=True, ensemble_bias=1.0)
+        from h3_live import DATA_DIR
+
+        # Office Live pool is 1–2 cast; exercise ensemble-only against the original pool.
+        pool = PromptPool(
+            [DATA_DIR / "prompts_scenes.txt"],
+            DATA_DIR / "h3_characters.json",
+            curated_share=1.0,
+            ensemble_only=True,
+            ensemble_bias=1.0,
+            max_cast=5,
+        )
         for _ in range(5):
             prompt, cast, _idx = pool.draw()
             self.assertNotIn("{NAME}", prompt)
-            # Ensembles fill 3 distinct names joined with " + ".
             self.assertGreaterEqual(cast.count(" + ") + 1, 3)
-            self.assertLessEqual(cast.count(" + ") + 1, 3)
             self.assertIn("integrated_multimodal_description", prompt)
 
     def test_is_ensemble(self) -> None:
@@ -75,6 +83,11 @@ class EnsembleTests(unittest.TestCase):
         self.assertTrue(
             PromptPool.is_ensemble("{NAME} {NAME2} {NAME3} together")
         )
+
+    def test_office_pool_has_no_trios(self) -> None:
+        pool = PromptPool()
+        for scene in pool.scenes():
+            self.assertLessEqual(PromptPool.slot_count(scene), 2)
 
 
 if __name__ == "__main__":

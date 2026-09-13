@@ -55,12 +55,44 @@
       margin: 1rem; border: 1px solid var(--line); overflow: hidden;
     }
     video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+    video.hide { display: none; }
     .wait {
       position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
       padding: 1.5rem; color: var(--muted); font-family: var(--mono); font-size: 0.85rem;
       pointer-events: none; background: rgba(0,0,0,0.35);
     }
     .wait.hide { display: none; }
+    .episode-stage {
+      position: absolute; inset: 0; display: none; flex-direction: column;
+      align-items: center; justify-content: center; gap: 1rem;
+      padding: 1.5rem; text-align: center;
+      background: linear-gradient(160deg, #141810 0%, #0a0b08 55%, #1a2214 100%);
+      z-index: 2;
+    }
+    .episode-stage.show { display: flex; }
+    .episode-stage .ep-kicker {
+      font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--accent); font-family: var(--mono);
+    }
+    .episode-stage .ep-title {
+      font-size: 1.15rem; font-weight: 650; color: var(--ink); max-width: 22rem; line-height: 1.35;
+    }
+    .episode-stage .ep-sub {
+      font-family: var(--mono); font-size: 0.78rem; color: var(--muted); max-width: 24rem; line-height: 1.45;
+    }
+    .ep-bar {
+      width: min(72%, 320px); height: 6px; border-radius: 999px;
+      background: #2a3224; overflow: hidden; margin-top: 0.35rem;
+    }
+    .ep-bar > i {
+      display: block; height: 100%; width: 0%;
+      background: var(--accent);
+      transition: width 0.4s ease;
+    }
+    .ep-actions {
+      display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; margin-top: 0.5rem;
+      pointer-events: auto;
+    }
     .controls {
       display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0 1rem 1rem; align-items: center;
     }
@@ -124,6 +156,22 @@
     }
     .quality-toggles { display: flex; flex-wrap: wrap; gap: 1rem; font-size: 0.82rem; }
     .quality-toggles label { display: flex; gap: 0.35rem; align-items: center; cursor: pointer; color: var(--ink); }
+    .episode-box {
+      margin: 0 1rem 1rem; padding: 0.75rem; border: 1px solid var(--line); border-radius: 4px;
+      display: grid; gap: 0.55rem;
+    }
+    .episode-box label { font-size: 0.72rem; color: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; }
+    .episode-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+    .episode-row select {
+      background: #0a0b08; color: var(--ink); border: 1px solid var(--line);
+      border-radius: 4px; padding: 0.45rem 0.55rem; font-family: var(--mono); font-size: 0.8rem;
+    }
+    a.dl {
+      font: 600 0.85rem var(--sans); color: var(--bg); background: var(--accent);
+      border: 0; padding: 0.55rem 0.9rem; border-radius: 4px; text-decoration: none;
+      display: inline-block;
+    }
+    a.dl.hide { display: none; }
   </style>
 </head>
 <body>
@@ -135,7 +183,18 @@
     <section class="stage">
       <div class="video-wrap">
         <video id="video" muted playsinline></video>
+        <video id="episodeVideo" class="hide" controls playsinline></video>
         <div class="wait" id="wait">Open stream to start generation.<br/>First clip ~40s cold.</div>
+        <div class="episode-stage" id="episodeStage" aria-live="polite">
+          <div class="ep-kicker" id="epKicker">Episode</div>
+          <div class="ep-title" id="epTitle">Preparing…</div>
+          <div class="ep-bar" aria-hidden="true"><i id="epBarFill"></i></div>
+          <div class="ep-sub" id="epSub"></div>
+          <div class="ep-actions">
+            <a class="dl hide" id="btnEpisodeDlStage" href="/api/episode.mp4" download="fasth3-episode.mp4">Download MP4</a>
+            <button type="button" class="secondary hide" id="btnEpisodeCancelStage">Cancel</button>
+          </div>
+        </div>
       </div>
       <div class="controls">
         <button id="btnPlay" type="button">Play stream</button>
@@ -160,6 +219,27 @@
           <button id="btnApplyQuality" type="button">Apply quality</button>
           <span class="prompt-note" id="qualityNote">Default live = 384² render, no token-reduction. sharp = full 448 (slower).</span>
         </div>
+      </div>
+      <div class="episode-box">
+        <label>Episode (batch download — stops Live)</label>
+        <div class="episode-row">
+          <select id="episodeScenes" aria-label="Scene count">
+            <option value="1">1 scene</option>
+            <option value="2">2 scenes</option>
+            <option value="3" selected>3 scenes</option>
+            <option value="4">4 scenes</option>
+            <option value="5">5 scenes</option>
+            <option value="6">6 scenes</option>
+            <option value="7">7 scenes</option>
+            <option value="8">8 scenes</option>
+            <option value="9">9 scenes</option>
+            <option value="10">10 scenes</option>
+          </select>
+          <button id="btnEpisode" type="button">Generate episode</button>
+          <button id="btnEpisodeCancel" class="secondary" type="button" disabled>Cancel episode</button>
+          <a class="dl hide" id="btnEpisodeDl" href="/api/episode.mp4" download="fasth3-episode.mp4">Download MP4</a>
+        </div>
+        <span class="prompt-note" id="episodeNote">Full 448 canvas, no token-reduction, native 24 fps — not streamed. Starts by stopping Live.</span>
       </div>
       <div class="prompt-box">
         <label>Next clip prompt</label>
@@ -201,6 +281,19 @@
     const btnApplyQuality = document.getElementById("btnApplyQuality");
     const ensembleOnly = document.getElementById("ensembleOnly");
     const qualityInputs = () => [...document.querySelectorAll('input[name="qualityPreset"]')];
+    const episodeScenes = document.getElementById("episodeScenes");
+    const btnEpisode = document.getElementById("btnEpisode");
+    const btnEpisodeCancel = document.getElementById("btnEpisodeCancel");
+    const btnEpisodeDl = document.getElementById("btnEpisodeDl");
+    const episodeNote = document.getElementById("episodeNote");
+    const episodeVideo = document.getElementById("episodeVideo");
+    const episodeStage = document.getElementById("episodeStage");
+    const epKicker = document.getElementById("epKicker");
+    const epTitle = document.getElementById("epTitle");
+    const epSub = document.getElementById("epSub");
+    const epBarFill = document.getElementById("epBarFill");
+    const btnEpisodeDlStage = document.getElementById("btnEpisodeDlStage");
+    const btnEpisodeCancelStage = document.getElementById("btnEpisodeCancelStage");
 
     let player = null;
     let pausedGen = false;
@@ -209,6 +302,9 @@
     let attachTimer = null;
     let heartbeatTimer = null;
     let lastStatus = null;
+    let episodeMode = "idle"; // idle | running | ready | error | cancelled
+    let episodeBlobUrl = null;
+    let episodeLoadedUrl = null;
     // Prompt editor is owned by the browser — status polls must never clobber it.
     let promptHydrated = false;
     let appliedMode = "random";
@@ -228,8 +324,10 @@
     }
 
     function setPlaying(on) {
-      btnPlay.disabled = on;
+      const epBusy = episodeMode === "running" || episodeMode === "ready";
+      btnPlay.disabled = on || episodeMode === "running";
       btnStop.disabled = !on;
+      if (epBusy) return;
       conn.textContent = on ? "streaming" : "idle";
       conn.classList.toggle("on", on);
     }
@@ -376,6 +474,195 @@
       }
     });
 
+    function updateEpisodeUi(s) {
+      const ep = (s && s.episode) || {};
+      const st = ep.status || "idle";
+      const running = st === "running";
+      const ready = st === "ready" && !!ep.download_ready;
+      btnEpisode.disabled = running;
+      btnEpisodeCancel.disabled = !running;
+      btnEpisodeCancelStage.classList.toggle("hide", !running);
+      episodeScenes.disabled = running;
+      btnPlay.disabled = running || watching;
+      const dlHref = ep.download_url
+        ? ep.download_url + (ep.download_url.includes("?") ? "&" : "?") + "t=" + Date.now()
+        : null;
+      [btnEpisodeDl, btnEpisodeDlStage].forEach((el) => {
+        if (ready && dlHref) {
+          el.classList.remove("hide");
+          el.href = dlHref;
+        } else {
+          el.classList.add("hide");
+        }
+      });
+
+      if (running) {
+        episodeMode = "running";
+        clearEpisodePlayback();
+        video.classList.add("hide");
+        episodeVideo.classList.add("hide");
+        wait.classList.add("hide");
+        episodeStage.classList.add("show");
+        const total = ep.scenes_requested || 1;
+        const done = ep.scenes_done || 0;
+        const cur = ep.current_scene != null ? ep.current_scene : Math.min(done + 1, total);
+        const pct = Math.max(2, Math.min(100, Math.round((done / total) * 100)));
+        // Prefer "in progress" fraction: scene cur of total fills toward next.
+        const livePct = Math.max(
+          pct,
+          Math.round(((Math.max(0, cur - 1) + 0.15) / total) * 100)
+        );
+        epBarFill.style.width = livePct + "%";
+        epKicker.textContent = "Episode · generating";
+        epTitle.textContent = `Scene ${cur} of ${total}`;
+        const bits = [];
+        if (ep.last_cast) bits.push(ep.last_cast);
+        if (s && s.gpu_pct != null) bits.push(`GPU ${s.gpu_pct.toFixed(0)}%`);
+        if (ep.elapsed_s != null) bits.push(`${ep.elapsed_s}s elapsed`);
+        bits.push("Live stopped");
+        epSub.textContent = bits.join(" · ");
+        episodeNote.textContent =
+          `Generating scene ${cur}/${total} · live stopped · ${ep.recipe || "episode"}`;
+        conn.textContent = "episode";
+        conn.classList.add("on");
+        return;
+      }
+
+      if (ready) {
+        episodeMode = "ready";
+        wait.classList.add("hide");
+        episodeStage.classList.remove("show");
+        video.classList.add("hide");
+        episodeVideo.classList.remove("hide");
+        const mb = ep.bytes != null ? (ep.bytes / (1024 * 1024)).toFixed(1) + " MiB" : "";
+        episodeNote.textContent =
+          `Ready${mb ? " · " + mb : ""}${ep.elapsed_s != null ? " · " + ep.elapsed_s + "s" : ""} — playing below; download anytime.`;
+        conn.textContent = "episode ready";
+        conn.classList.add("on");
+        loadEpisodePlayback(ep.download_url);
+        return;
+      }
+
+      // idle / error / cancelled — leave stage unless we were showing episode
+      if (st === "error" || st === "cancelled") {
+        episodeMode = st;
+        clearEpisodePlayback();
+        episodeVideo.classList.add("hide");
+        video.classList.remove("hide");
+        episodeStage.classList.add("show");
+        epBarFill.style.width = "0%";
+        epKicker.textContent = st === "error" ? "Episode failed" : "Episode cancelled";
+        epTitle.textContent = st === "error" ? (ep.error || "unknown error") : "Batch stopped";
+        epSub.textContent = "Live is available again — press Play stream.";
+        episodeNote.textContent =
+          st === "error"
+            ? "Episode failed: " + (ep.error || "unknown")
+            : "Episode cancelled. Live available again via Play.";
+        conn.textContent = "idle";
+        conn.classList.remove("on");
+        return;
+      }
+
+      if (episodeMode !== "idle") {
+        clearEpisodePlayback();
+        episodeVideo.classList.add("hide");
+        video.classList.remove("hide");
+        episodeStage.classList.remove("show");
+        episodeMode = "idle";
+        if (!watching) {
+          conn.textContent = "idle";
+          conn.classList.remove("on");
+        }
+      }
+      episodeNote.textContent =
+        "Full 448 canvas, no token-reduction, native 24 fps — not streamed. Starts by stopping Live.";
+    }
+
+    function clearEpisodePlayback() {
+      if (episodeBlobUrl) {
+        URL.revokeObjectURL(episodeBlobUrl);
+        episodeBlobUrl = null;
+      }
+      episodeLoadedUrl = null;
+      episodeVideo.removeAttribute("src");
+      try { episodeVideo.load(); } catch (_) {}
+    }
+
+    async function loadEpisodePlayback(url) {
+      if (!url) return;
+      if (episodeLoadedUrl === url && episodeVideo.src) return;
+      episodeLoadedUrl = url;
+      // Fetch→blob so playback works even when Content-Disposition is attachment.
+      try {
+        const bust = url + (url.includes("?") ? "&" : "?") + "play=" + Date.now();
+        const r = await fetch(bust);
+        if (!r.ok) throw new Error("fetch " + r.status);
+        const blob = await r.blob();
+        if (episodeBlobUrl) URL.revokeObjectURL(episodeBlobUrl);
+        episodeBlobUrl = URL.createObjectURL(blob);
+        episodeVideo.src = episodeBlobUrl;
+        episodeVideo.muted = false;
+        episodeVideo.play().catch(() => {});
+      } catch (err) {
+        console.warn("episode preview", err);
+        episodeVideo.src = url + (url.includes("?") ? "&" : "?") + "t=" + Date.now();
+      }
+    }
+
+    btnEpisode.addEventListener("click", async () => {
+      const scenes = parseInt(episodeScenes.value, 10) || 1;
+      btnEpisode.disabled = true;
+      episodeNote.textContent = "Stopping Live and starting episode…";
+      // Show stage immediately while the request is in flight.
+      video.classList.add("hide");
+      episodeVideo.classList.add("hide");
+      wait.classList.add("hide");
+      episodeStage.classList.add("show");
+      epKicker.textContent = "Episode · starting";
+      epTitle.textContent = `Queuing ${scenes} scene${scenes === 1 ? "" : "s"}…`;
+      epSub.textContent = "Stopping Live stream if active";
+      epBarFill.style.width = "4%";
+      try {
+        if (watching) await stopWatch();
+        const r = await fetch("/api/control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "episode_start",
+            scenes,
+            session: sessionId,
+          }),
+        });
+        const j = await r.json();
+        if (!j.ok) {
+          episodeNote.textContent = j.error || "Episode start failed";
+          btnEpisode.disabled = false;
+          episodeStage.classList.remove("show");
+          video.classList.remove("hide");
+          return;
+        }
+        refreshStatus();
+      } catch (_) {
+        episodeNote.textContent = "Episode start failed — check the server.";
+        btnEpisode.disabled = false;
+        episodeStage.classList.remove("show");
+        video.classList.remove("hide");
+      }
+    });
+
+    async function cancelEpisode() {
+      btnEpisodeCancel.disabled = true;
+      btnEpisodeCancelStage.disabled = true;
+      try {
+        await postControl("episode_cancel");
+      } finally {
+        btnEpisodeCancelStage.disabled = false;
+        refreshStatus();
+      }
+    }
+    btnEpisodeCancel.addEventListener("click", cancelEpisode);
+    btnEpisodeCancelStage.addEventListener("click", cancelEpisode);
+
     function destroyPlayer() {
       if (attachTimer) { clearInterval(attachTimer); attachTimer = null; }
       if (player) {
@@ -502,9 +789,17 @@
           metric("Recipe", s.recipe_note || `${s.width}×${s.height} · ${s.frames}f · ${s.steps} step`),
           metric("Play fps", s.play_fps > 0 ? s.play_fps.toFixed(2) : "…"),
           metric("Gen", s.paused ? "paused" : (s.generating ? "running" : "waiting"), s.paused ? "warn" : ""),
+          metric("Episode", (() => {
+            const ep = s.episode || {};
+            if (ep.status === "running")
+              return `${ep.scenes_done || 0}/${ep.scenes_requested || "?"} scenes`;
+            if (ep.status === "ready") return "ready ↓";
+            return ep.status || "idle";
+          })(), (s.episode && s.episode.status === "running") ? "warn" : ""),
           metric("Chip", s.chip || "—"),
           metric("Next prompt", s.next_prompt_note || s.prompt_mode || "—"),
         ].join("");
+        updateEpisodeUi(s);
         // Hydrate the editor once from the server; never fight the user after that.
         if (!promptHydrated) {
           appliedMode = s.prompt_mode === "custom" ? "custom" : "random";
@@ -530,16 +825,22 @@
           promptText.placeholder =
             `Paste a full H3 prompt, then Apply. {NAME}/{NAME2} OK. Pool has ${s.pool_scenes} scenes when Random is applied.`;
         }
-        if (watching && !player) {
+        if (watching && !player && episodeMode !== "running" && episodeMode !== "ready") {
           if (s.generating) {
             wait.textContent = `Generating… GPU ${s.gpu_pct != null ? s.gpu_pct.toFixed(0) + "%" : "…"} · first clip ~40s`;
           } else if (s.media_ready) {
             wait.textContent = "Clip ready — attaching player…";
           }
         }
-        clipMeta.textContent = s.last_cast
-          ? `clip ${String(s.last_clip).padStart(4, "0")} · scene ${s.last_scene} · ${s.last_cast}`
-          : "waiting for first clip…";
+        if (episodeMode === "running" || episodeMode === "ready") {
+          clipMeta.textContent = (s.episode && s.episode.last_cast)
+            ? `episode · ${s.episode.scenes_done || 0}/${s.episode.scenes_requested || "?"} · ${s.episode.last_cast}`
+            : "episode batch…";
+        } else {
+          clipMeta.textContent = s.last_cast
+            ? `clip ${String(s.last_clip).padStart(4, "0")} · scene ${s.last_scene} · ${s.last_cast}`
+            : "waiting for first clip…";
+        }
         pausedGen = !!s.paused;
         btnPauseGen.textContent = pausedGen ? "Resume gen" : "Pause gen";
       } catch (_) {}

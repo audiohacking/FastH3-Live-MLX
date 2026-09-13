@@ -31,7 +31,7 @@ class PromptPoolTests(unittest.TestCase):
     def test_counts(self) -> None:
         pool = PromptPool()
         total = sum(pool.counts().values())
-        self.assertGreater(total, 100)
+        self.assertGreater(total, 40)
 
     def test_office_pool_names_show(self) -> None:
         pool = PromptPool(curated_share=1.0)
@@ -53,7 +53,7 @@ class PromptPoolTests(unittest.TestCase):
             self.assertGreaterEqual(n, 1)
 
     def test_cast_names_are_unique(self) -> None:
-        pool = PromptPool(curated_share=1.0, ensemble_bias=1.0)
+        pool = PromptPool(curated_share=1.0, ensemble_bias=0.0)
         for _ in range(50):
             prompt, cast, _idx = pool.draw()
             names = cast.split(" + ")
@@ -61,6 +61,29 @@ class PromptPoolTests(unittest.TestCase):
             self.assertNotIn("{NAME}", prompt)
             self.assertNotIn("{NAME2}", prompt)
             self.assertNotIn("{NAME3}", prompt)
+
+    def test_office_scenes_are_static_face_forward(self) -> None:
+        pool = PromptPool()
+        for scene in pool.scenes():
+            low = scene.lower()
+            self.assertTrue(
+                "static shot" in low
+                or "pushes in with small amplitude at slow speed" in low,
+                scene[:120],
+            )
+            self.assertTrue(
+                "facing the camera" in low
+                or "toward the camera" in low
+                or "faces the camera" in low
+                or "into the camera" in low
+                or "documentary camera" in low
+                or "documentary lens" in low,
+                scene[:120],
+            )
+            self.assertIn("the office", low)
+            self.assertIn("mockumentary", low)
+            self.assertNotRegex(low, r"\bturns?\b|\bturning\b|from behind|over shoulder")
+            self.assertLessEqual(PromptPool.slot_count(scene), 2)
 
     def test_wrap_idea_makes_context_ir(self) -> None:
         wrapped = PromptPool.wrap_idea_as_live_prompt(
@@ -104,7 +127,7 @@ class ValidateTests(unittest.TestCase):
 
         path = DATA_DIR / "prompts_scenes_office.txt"
         checked, failures = validate_scene_file(path)
-        self.assertGreater(checked, 100)
+        self.assertGreater(checked, 40)
         self.assertEqual(failures, 0)
 
 

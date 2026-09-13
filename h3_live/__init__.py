@@ -31,7 +31,7 @@ LIVE_MAX_PLAY_FPS = 24.0
 LIVE_TOKEN_REDUCTION = False  # 384+TR causes double/stripe subjects on FastH3
 LIVE_CURATED_SHARE = 0.50  # recognizable faces (was 0.30)
 LIVE_MAX_CAST = 3  # Office Live: never fill more than 1–3 characters per scene
-LIVE_ENSEMBLE_BIAS = 0.05  # rare 3-hand draws; prefer solo stares + two-handers
+LIVE_ENSEMBLE_BIAS = 0.0  # Office pool is solo/duo face locks; no 3-hand preference
 LIVE_QUALITY_PRESET = "live"
 # Prefer models/MiniMax-H3-FastH3 (see scripts/prepare_fasth3_native_tree.sh).
 # LoRA id kept only as fallback when the student tree is absent.

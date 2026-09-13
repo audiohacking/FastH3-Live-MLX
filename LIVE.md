@@ -40,12 +40,12 @@ python liveserver.py
 | Steps | 4 (DMD ladder ≈ stock `--steps 4` under shift 12/3) |
 | Layers / reuse | 50 / 1 (do not thin a 4-step student) |
 | Token reduction | **off** in `live`/`sharp`/`long` (on only for `draft`) |
-| Curated cast | 50% curated / 50% full; **5%** ensemble-bias (mostly 1–2 cast); **max 1–3** |
+| Curated cast | 50% curated / 50% full; **ensemble-bias 0** (solo/duo face locks); **max 1–3** |
 | INT8 row FC2 | on when TensorOps available (`--no-int8-row-fc2` to disable) |
 | LoRA | none (student replaces the base DiT) |
 | Play fps | **adaptive** (`--fps 0`, default): `frames / (gen_s × --margin)`; clamp `--min-fps`/`--max-fps`. Fixed: `--fps N` |
 
-**Prompt pool (default):** The Office only — `data/fasth3_live/prompts_scenes_office.txt` × `h3_characters_office.json`. Scenes are **exclusively on the Dunder Mifflin Scranton set** (bullpen, Michael’s office, conference room, reception, break room, annex, warehouse, etc.): **mostly silent solo stares into the camera**, plus **two-hander interactions**, with only a few rare 3-hand beats; slight horror-thriller vibe; cast always `from The Office`, capped at **1–3** characters. Originals kept as `prompts_scenes.txt`, `prompts_scenes_2.txt`, `h3_characters.json`:
+**Prompt pool (default):** The Office only — `prompts_scenes_office.txt` × `h3_characters_office.json` (Dwight, Jim, Michael, Pam, Andy). **On-set only.** Every prompt locks **NBC The Office mockumentary / talking-head documentary look** (fluorescent office light, show colour grade, set dressing). Mostly **single-face medium close-ups already facing the camera** (no turns); sparse side-by-side two-shots. **Near-static** (static or tiny slow push-in) for low play-fps detail. Originals: `prompts_scenes.txt`, `prompts_scenes_2.txt`, `h3_characters.json`.
 
 ```bash
 python liveserver.py \
@@ -207,7 +207,14 @@ Full commands + interpret: [`OVERNIGHT.md`](OVERNIGHT.md).
 | [`scripts/prepare_fasth3_native_tree.sh`](scripts/prepare_fasth3_native_tree.sh) | Hybrid `-d` tree |
 | [`scripts/sync_fasth3_live_bucket.sh`](scripts/sync_fasth3_live_bucket.sh) | Prompt/code (+ optional Comfy refs) |
 
-## Measure
+## Episode batch (download)
+
+Exclusive with Live: **Generate episode** stops the stream, clears watchers, and
+owns ``./h3`` until the job finishes. Recipe is full **448²**, no token-reduction,
+native **24 fps** MP4 concat (no play-fps retime). Choose **1–10** scenes on the
+dashboard; download ``/api/episode.mp4`` when status is ready. Live Play works again
+after the batch ends or is cancelled.
+
 
 ```bash
 # Adaptive (default): after each clip, play_fps = frames / (ema_gen × 1.08)

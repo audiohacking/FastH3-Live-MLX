@@ -70,6 +70,21 @@ from h3_live.dashboard import (  # noqa: E402
     load_dashboard_html,
     logs_after,
 )
+from h3_live.episode import (  # noqa: E402
+    EPISODE_FRAMES,
+    EPISODE_HEIGHT,
+    EPISODE_LAYERS,
+    EPISODE_RECIPE_NOTE,
+    EPISODE_RENDER_HEIGHT,
+    EPISODE_RENDER_WIDTH,
+    EPISODE_REUSE,
+    EPISODE_STEPS,
+    EPISODE_TOKEN_REDUCTION,
+    EPISODE_WIDTH,
+    EpisodeJob,
+    clamp_scene_count,
+    concat_mp4s,
+)
 from h3_live.pace import adaptive_play_fps, ema  # noqa: E402
 from h3_live.presets import (  # noqa: E402
     DEFAULT_PRESET,
@@ -138,6 +153,9 @@ class LiveState:
         self.ensemble_only = False
         self.curated_share = LIVE_CURATED_SHARE
         self.recipe_note = ""
+        # Offline episode batch (pauses Live producer while running).
+        self.episode = EpisodeJob()
+        self.episode_hold = False
 
     def _prune_watch_sessions_locked(self) -> list[str]:
         now = time.monotonic()
@@ -214,6 +232,8 @@ class LiveState:
                 "curated_share": self.curated_share,
                 "recipe_note": self.recipe_note,
                 "presets": presets_public(),
+                "episode": self.episode.as_dict(),
+                "episode_hold": self.episode_hold,
             }
 
     def demand_count(self, ts_viewers: int) -> int:
@@ -296,10 +316,46 @@ class Broadcast:
                     after = int((qs.get("after") or ["0"])[0])
                     self._json(200, {"lines": logs_after(after)})
                     return
+                if path in ("/api/episode.mp4", "/api/episode"):
+                    self._episode_download()
+                    return
                 if wants_ts:
+                    with broadcast.state.lock:
+                        episode_busy = (
+                            broadcast.state.episode_hold
+                            or broadcast.state.episode.is_active()
+                        )
+                    if episode_busy:
+                        self.send_error(
+                            409, "episode batch running — live stream is stopped"
+                        )
+                        return
                     self._stream()
                     return
                 self.send_error(404, "use / for dashboard, /stream.ts for MPEG-TS (VLC)")
+
+            def _episode_download(self) -> None:
+                with broadcast.state.lock:
+                    job = broadcast.state.episode
+                    path = job.output_path if job.status == "ready" else None
+                if path is None or not path.is_file():
+                    self._json(
+                        404,
+                        {"ok": False, "error": "episode not ready"},
+                    )
+                    return
+                data = path.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header(
+                    "Content-Disposition",
+                    'attachment; filename="fasth3-episode.mp4"',
+                )
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(data)
 
             def do_POST(self):  # noqa: N802
                 import json
@@ -329,6 +385,20 @@ class Broadcast:
                     if not session:
                         self._json(400, {"ok": False, "error": "session required"})
                         return
+                    with broadcast.state.lock:
+                        episode_busy = (
+                            broadcast.state.episode_hold
+                            or broadcast.state.episode.is_active()
+                        )
+                    if action == "watch" and episode_busy:
+                        self._json(
+                            409,
+                            {
+                                "ok": False,
+                                "error": "episode batch is running — live is stopped until it finishes",
+                            },
+                        )
+                        return
                     n = broadcast.state.touch_watch(session)
                     if action == "watch":
                         log.info(
@@ -352,7 +422,26 @@ class Broadcast:
                     if broadcast.demand_count() == 0:
                         broadcast.cancel_generation("no viewers")
                 elif action == "cancel":
-                    broadcast.cancel_generation("dashboard cancel", force=True)
+                    broadcast.cancel_all("dashboard cancel")
+                elif action == "episode_start":
+                    try:
+                        scenes = clamp_scene_count(body.get("scenes", 1))
+                    except ValueError as exc:
+                        self._json(400, {"ok": False, "error": str(exc)})
+                        return
+                    try:
+                        broadcast.start_episode(scenes)
+                    except RuntimeError as exc:
+                        self._json(409, {"ok": False, "error": str(exc)})
+                        return
+                    log.info(
+                        "episode start — %d scene(s); live stopped\n%s",
+                        scenes,
+                        EPISODE_RECIPE_NOTE,
+                    )
+                elif action == "episode_cancel":
+                    broadcast.cancel_all("episode cancel")
+                    log.info("episode cancel requested")
                 elif action == "set_prompt":
                     mode = str(body.get("mode") or "random").strip().lower()
                     text = str(body.get("text") or "")
@@ -529,6 +618,11 @@ class Broadcast:
         self.server = ThreadingHTTPServer((host, port), Handler)
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self._episode_runner = None  # set via set_episode_runner
+
+    def set_episode_runner(self, runner) -> None:
+        """Bound from main() so HTTP can start the exclusive batch worker."""
+        self._episode_runner = runner
 
     def viewer_count(self) -> int:
         with self.lock:
@@ -538,11 +632,54 @@ class Broadcast:
         """TS stream clients + dashboard watch tokens (Play before media)."""
         return self.state.demand_count(self.viewer_count())
 
+    def stop_live(self, reason: str) -> None:
+        """Hard-stop Live so batch can own the engine exclusively."""
+        with self.state.lock:
+            self.state.episode_hold = True
+            self.state.watch_sessions.clear()
+            self.state.media_ready = False
+        with self.lock:
+            clients = list(self.clients)
+            self.clients.clear()
+        for q in clients:
+            try:
+                q.put_nowait(b"")
+            except queue.Full:
+                pass
+        self.cancel_generation(reason, force=True)
+        log.info("live stopped — %s", reason)
+
+    def start_episode(self, scenes: int) -> None:
+        with self.state.lock:
+            if self.state.episode.is_active():
+                raise RuntimeError("an episode is already generating")
+            if self._episode_runner is None:
+                raise RuntimeError("episode runner not ready")
+            self.state.episode.reset_for_start(scenes)
+        self.stop_live("episode batch started")
+        threading.Thread(
+            target=self._episode_runner,
+            args=(scenes,),
+            name="h3live-episode",
+            daemon=True,
+        ).start()
+
+    def cancel_all(self, reason: str) -> None:
+        with self.state.lock:
+            if self.state.episode.is_active():
+                self.state.episode.cancel.set()
+        self.cancel_generation(reason, force=True)
+
     def cancel_generation(self, reason: str, *, force: bool = False) -> None:
         """Stop the in-flight ./h3 job immediately (e.g. last viewer disconnected)."""
         with self.state.lock:
             fn = self.state.cancel_fn
             was_generating = self.state.generating
+            episode_busy = self.state.episode.is_active()
+        # Viewer drop must not kill an exclusive episode batch.
+        if episode_busy and not force:
+            log.info("skip cancel (%s) — episode owns the engine", reason)
+            return
         if not force and not was_generating:
             return
         log.info("cancel generation — %s", reason)
@@ -553,11 +690,18 @@ class Broadcast:
                 log.warning("cancel failed: %s", exc)
 
     def wait_for_viewer(self, stop: threading.Event, *, poll_s: float = 0.5) -> bool:
-        """Block until a stream viewer or dashboard watch is active and not paused."""
+        """Block until Live is allowed and a viewer/watch is active (not paused)."""
         idle_logged = False
         while not stop.is_set():
             with self.state.lock:
                 paused = self.state.paused
+                hold = self.state.episode_hold or self.state.episode.is_active()
+            if hold:
+                if not idle_logged:
+                    log.info("idle — episode batch owns the engine (live paused)")
+                    idle_logged = True
+                time.sleep(poll_s)
+                continue
             if self.demand_count() > 0 and not paused:
                 return True
             if not idle_logged:
@@ -588,6 +732,9 @@ class Broadcast:
         if not data:
             return
         with self.state.lock:
+            if self.state.episode_hold or self.state.episode.is_active():
+                log.info("drop paced clip — episode owns the engine")
+                return
             self.state.media_ready = True
         # Dashboard Play holds a watch token first, then opens MSE after media_ready.
         # Wait briefly so the first TS bytes aren't discarded into an empty fan-out.
@@ -996,6 +1143,117 @@ def main(argv: list[str] | None = None) -> int:
     gen_ema: float | None = None
     ready = threading.Event()
 
+    def run_episode(scenes: int) -> None:
+        """Exclusive batch: sharp canvas, native 24 fps concat, no stream retime."""
+        episode_dir = out_root / "episode"
+        episode_dir.mkdir(parents=True, exist_ok=True)
+        clips: list[Path] = []
+        job = state.episode
+        try:
+            with state.lock:
+                pool.ensemble_only = state.ensemble_only
+                pool.curated_share = state.curated_share
+                mode = state.prompt_mode
+                custom = state.custom_prompt
+            for i in range(scenes):
+                if stop.is_set() or job.cancel.is_set():
+                    raise RuntimeError("cancelled")
+                with state.lock:
+                    job.current_scene = i + 1
+                if mode == "custom" and custom.strip() and i == 0:
+                    prompt, cast = pool.normalize_custom(custom)
+                    scene_idx = -1
+                    source = "episode · custom first scene"
+                else:
+                    prompt, cast, scene_idx = pool.draw()
+                    source = f"episode · pool scene {scene_idx:03d}"
+                seed = (
+                    args.seed if args.seed is not None else random.randint(1, 2**31 - 1)
+                )
+                mp4 = episode_dir / f"scene_{i + 1:02d}.mp4"
+                log.info(
+                    "episode scene %d/%d  %s  seed %s  cast=%s\n%s\n"
+                    "—— prompt (%d chars) ——\n%s\n—— end ——",
+                    i + 1,
+                    scenes,
+                    source,
+                    seed,
+                    cast,
+                    EPISODE_RECIPE_NOTE,
+                    len(prompt),
+                    prompt,
+                )
+                with state.lock:
+                    state.generating = True
+                    job.last_cast = cast[:120]
+                t0 = time.time()
+                req = GenerateRequest(
+                    prompt=prompt,
+                    output_path=mp4,
+                    width=EPISODE_WIDTH,
+                    height=EPISODE_HEIGHT,
+                    render_width=EPISODE_RENDER_WIDTH,
+                    render_height=EPISODE_RENDER_HEIGHT,
+                    num_frames=EPISODE_FRAMES,
+                    quality="four_step",
+                    steps=EPISODE_STEPS,
+                    layers=EPISODE_LAYERS,
+                    reuse=EPISODE_REUSE,
+                    token_reduction=EPISODE_TOKEN_REDUCTION,
+                    seed=seed,
+                    ssd_streaming=False,
+                    int8_row_fc2=bool(args.int8_row_fc2),
+                    profile=False,
+                    oneshot=False,
+                    loras=loras,
+                    mode="t2va",
+                )
+                try:
+                    engine.generate(req)
+                finally:
+                    with state.lock:
+                        state.generating = False
+                if stop.is_set() or job.cancel.is_set():
+                    raise RuntimeError("cancelled")
+                if not mp4.is_file():
+                    raise RuntimeError(f"missing output {mp4}")
+                gen_s = time.time() - t0
+                log.info("episode scene %d/%d done in %.1fs", i + 1, scenes, gen_s)
+                clips.append(mp4)
+                with state.lock:
+                    job.scenes_done = i + 1
+                    job.clip_paths = list(clips)
+
+            dest = episode_dir / "episode.mp4"
+            log.info("episode concat %d scenes → %s", len(clips), dest)
+            concat_mp4s(clips, dest)
+            with state.lock:
+                job.output_path = dest
+                job.status = "ready"
+                job.finished_at = time.time()
+                job.current_scene = None
+                state.episode_hold = False
+            log.info(
+                "episode ready — download %s (%.1f MiB)",
+                dest,
+                dest.stat().st_size / (1024 * 1024),
+            )
+        except Exception as exc:
+            cancelled = job.cancel.is_set() or str(exc) == "cancelled"
+            with state.lock:
+                job.status = "cancelled" if cancelled else "error"
+                job.error = None if cancelled else str(exc)
+                job.finished_at = time.time()
+                job.current_scene = None
+                state.episode_hold = False
+                state.generating = False
+            if cancelled:
+                log.info("episode cancelled")
+            else:
+                log.error("episode failed: %s", exc)
+
+    broadcast.set_episode_runner(run_episode)
+
     def producer() -> None:
         nonlocal gen_ema
         clip_i = 0
@@ -1003,10 +1261,12 @@ def main(argv: list[str] | None = None) -> int:
         while not stop.is_set():
             if args.max_clips and clip_i >= args.max_clips:
                 break
-            # Do not burn Metal while nobody is watching.
+            # Do not burn Metal while nobody is watching (or while episode owns GPU).
             if not broadcast.wait_for_viewer(stop):
                 break
             with state.lock:
+                if state.episode_hold or state.episode.is_active():
+                    continue
                 mode = state.prompt_mode
                 custom = state.custom_prompt
                 render_w = state.render_width
@@ -1167,6 +1427,13 @@ def main(argv: list[str] | None = None) -> int:
             if item is None:
                 break
             ts_path, dur, meta = item
+            with state.lock:
+                if state.episode_hold or state.episode.is_active():
+                    log.info(
+                        "drop live clip %04d — episode mode (exclusive)",
+                        meta.get("clip", -1),
+                    )
+                    continue
             streamed += 1
             if not ready.is_set() and streamed >= max(1, args.prefill):
                 ready.set()
