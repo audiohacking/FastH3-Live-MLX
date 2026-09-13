@@ -6,7 +6,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from h3_live import DATA_DIR, LIVE_FRAMES
+from h3_live import DATA_DIR
 
 
 def load_upstream_validator():
@@ -27,10 +27,14 @@ def load_upstream_validator():
 def validate_scene_file(
     path: Path,
     *,
-    frames: int = LIVE_FRAMES,
+    frames: int = 362,
     authored_fps: float = 24.0,
 ) -> tuple[int, int]:
-    """Validate all blocks. Returns ``(checked, failures)``."""
+    """Validate all blocks. Returns ``(checked, failures)``.
+
+    Scenes are authored for the 362-frame / ~15.08 s timeline even when Live
+    generates shorter clips, so validation uses 362 by default.
+    """
     mod = load_upstream_validator()
     text = Path(path).read_text(encoding="utf-8")
     blocks = [b.strip() for b in text.split("\n---\n") if b.strip()]

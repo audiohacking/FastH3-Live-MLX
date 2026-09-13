@@ -164,13 +164,20 @@ failed:
 static char *h3_prepared_key(const char *conditioning,
                              const h3_params *params,
                              int render_width, int render_height) {
+    /* DiT weights + AdaLN schedule are prompt-independent. Embedding the full
+     * prompt here forced a ~5s transformer reload every Live clip. Text is
+     * rebound via h3_dit_reset_run (refine + maps); token-count must match. */
+    (void)conditioning;
+    int conditioned = (params->first_frame != NULL) ||
+                      (params->last_frame != NULL) ||
+                      (params->reference_count > 0);
     h3_key key = {0};
     if (!h3_key_append(
             &key,
-            "%s|shape=%dx%dx%d|steps=%d|layers=%d|reuse-core=%d|reduce=%d"
-            "|row-fc2=%d|reference-rope=%d|ssd-streaming=%d"
+            "prepared|cond=%d|shape=%dx%dx%d|steps=%d|layers=%d|reuse-core=%d"
+            "|reduce=%d|row-fc2=%d|reference-rope=%d|ssd-streaming=%d"
             "|slow=%d%d%d%d%d%d%d%d%d%d",
-            conditioning, render_width, render_height, params->frames,
+            conditioned, render_width, render_height, params->frames,
             params->steps, params->dit_layers, params->core_reuse,
             params->token_reduction, params->use_int8_row_fc2,
             params->use_reference_rope,
@@ -1415,6 +1422,39 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             h3_set_error(ctx, "%s", detail);
             goto cleanup;
         }
+        /* Optional fixed text width so prepared DiT can stay resident across
+         * Live prompts (token counts otherwise vary ~118–186). Unset = no
+         * pad (zero overhead). Truncate only if over; never invent tokens
+         * beyond the env budget. */
+        {
+            const char *pad_env = getenv("H3_PAD_TEXT_TOKENS");
+            size_t pad_to = 0;
+            if (pad_env && *pad_env) {
+                char *end = NULL;
+                unsigned long value = strtoul(pad_env, &end, 10);
+                if (end != pad_env && value > 0 && value < 4096)
+                    pad_to = (size_t)value;
+            }
+            if (pad_to && token_count > pad_to) {
+                fprintf(stderr,
+                        "h3: truncating prompt from %zu to %zu tokens "
+                        "(H3_PAD_TEXT_TOKENS)\n",
+                        token_count, pad_to);
+                token_count = pad_to;
+            } else if (pad_to && token_count < pad_to) {
+                uint32_t *grown = realloc(ids, pad_to * sizeof(*ids));
+                if (!grown) {
+                    h3_set_error(ctx, "out of memory padding text tokens");
+                    goto cleanup;
+                }
+                ids = grown;
+                for (size_t index = token_count; index < pad_to; index++)
+                    ids[index] = H3_PAD_TOKEN_ID;
+                fprintf(stderr, "h3: padded text tokens %zu -> %zu\n",
+                        token_count, pad_to);
+                token_count = pad_to;
+            }
+        }
         h3_progress_emit(&progress, "text encoder", 0, 50);
         if (!h3_text_encode_bf16(
                 text_path, "h3_shaders.metal", ids, token_count,
@@ -1462,58 +1502,67 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     }
     float spatial_rope_scale = !params->use_reference_rope &&
         render_width == 256 && render_height == 256 ? 0.5f : 1.0f;
+    detail[0] = '\0';
     if (ctx->cache_enabled && ctx->dit && ctx->dit_key &&
-        !strcmp(ctx->dit_key, prepared_key)) {
+        !strcmp(ctx->dit_key, prepared_key) &&
+        h3_dit_reset_run(
+            ctx->dit, &text, condition_video_rows, condition_video_elements,
+            condition_audio_rows, condition_audio_elements,
+            detail, sizeof(detail))) {
         dit = ctx->dit;
         dit_is_cached = 1;
-        if (!h3_dit_reset_run(
-                dit, condition_video_rows, condition_video_elements,
-                condition_audio_rows, condition_audio_elements,
-                detail, sizeof(detail))) {
-            h3_set_error(ctx, "%s", detail);
-            goto cleanup;
-        }
         fprintf(stderr, "h3: prepared DiT cache hit\n");
-    } else if (conditioned) {
-        dit = h3_dit_load_conditioned(
-            dit_path, "h3_shaders.metal", &text, &layout, &sigmas,
-            (unsigned)params->dit_layers, (unsigned)params->core_reuse,
-            params->token_reduction,
-            params->ssd_streaming,
-            spatial_rope_scale,
-            params->use_slower_bf16_mlp,
-            params->use_slower_bf16_qkv,
-            params->use_slower_bf16_attention_output,
-            params->use_slower_row_major_attention_output,
-            params->use_slower_unfused_int8_inputs,
-            params->use_slower_unfused_qkv_rope,
-            params->use_slower_scalar_qkv_rms,
-            params->use_slower_uncached_int8_scales,
-            params->use_slower_dynamic_fc1_k,
-            params->use_slower_grouped_quantizer,
-            params->use_int8_row_fc2,
-            condition_video_rows, condition_video_elements,
-            condition_audio_rows, condition_audio_elements,
-            h3_dit_progress_bridge, &progress, detail, sizeof(detail));
     } else {
-        dit = h3_dit_load_t2va(
-            dit_path, "h3_shaders.metal", &text, &layout, &sigmas,
-            (unsigned)params->dit_layers, (unsigned)params->core_reuse,
-            params->token_reduction,
-            params->ssd_streaming,
-            spatial_rope_scale,
-            params->use_slower_bf16_mlp,
-            params->use_slower_bf16_qkv,
-            params->use_slower_bf16_attention_output,
-            params->use_slower_row_major_attention_output,
-            params->use_slower_unfused_int8_inputs,
-            params->use_slower_unfused_qkv_rope,
-            params->use_slower_scalar_qkv_rms,
-            params->use_slower_uncached_int8_scales,
-            params->use_slower_dynamic_fc1_k,
-            params->use_slower_grouped_quantizer,
-            params->use_int8_row_fc2,
-            h3_dit_progress_bridge, &progress, detail, sizeof(detail));
+        if (ctx->cache_enabled && ctx->dit) {
+            /* Shape matched but text width / rebind failed — drop and reload. */
+            if (ctx->dit_key && !strcmp(ctx->dit_key, prepared_key) && detail[0])
+                fprintf(stderr, "h3: prepared DiT cache miss (%s)\n", detail);
+            h3_dit_free(ctx->dit);
+            ctx->dit = NULL;
+            free(ctx->dit_key);
+            ctx->dit_key = NULL;
+        }
+        if (conditioned) {
+            dit = h3_dit_load_conditioned(
+                dit_path, "h3_shaders.metal", &text, &layout, &sigmas,
+                (unsigned)params->dit_layers, (unsigned)params->core_reuse,
+                params->token_reduction,
+                params->ssd_streaming,
+                spatial_rope_scale,
+                params->use_slower_bf16_mlp,
+                params->use_slower_bf16_qkv,
+                params->use_slower_bf16_attention_output,
+                params->use_slower_row_major_attention_output,
+                params->use_slower_unfused_int8_inputs,
+                params->use_slower_unfused_qkv_rope,
+                params->use_slower_scalar_qkv_rms,
+                params->use_slower_uncached_int8_scales,
+                params->use_slower_dynamic_fc1_k,
+                params->use_slower_grouped_quantizer,
+                params->use_int8_row_fc2,
+                condition_video_rows, condition_video_elements,
+                condition_audio_rows, condition_audio_elements,
+                h3_dit_progress_bridge, &progress, detail, sizeof(detail));
+        } else {
+            dit = h3_dit_load_t2va(
+                dit_path, "h3_shaders.metal", &text, &layout, &sigmas,
+                (unsigned)params->dit_layers, (unsigned)params->core_reuse,
+                params->token_reduction,
+                params->ssd_streaming,
+                spatial_rope_scale,
+                params->use_slower_bf16_mlp,
+                params->use_slower_bf16_qkv,
+                params->use_slower_bf16_attention_output,
+                params->use_slower_row_major_attention_output,
+                params->use_slower_unfused_int8_inputs,
+                params->use_slower_unfused_qkv_rope,
+                params->use_slower_scalar_qkv_rms,
+                params->use_slower_uncached_int8_scales,
+                params->use_slower_dynamic_fc1_k,
+                params->use_slower_grouped_quantizer,
+                params->use_int8_row_fc2,
+                h3_dit_progress_bridge, &progress, detail, sizeof(detail));
+        }
     }
     if (!dit) {
         h3_set_error(ctx, "%s", detail);

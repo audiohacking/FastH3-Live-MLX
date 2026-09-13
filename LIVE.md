@@ -1,8 +1,6 @@
 # FastH3 Live on h3.c (Apple Metal)
 
-Standalone continuous stream for Apple Silicon — **this repo**
-([audiohacking/FastH3-Live-MLX](https://github.com/audiohacking/FastH3-Live-MLX)).
-Forked from h3-ws; runtime is **h3.c Metal**, not MLX (slug is historical).
+Standalone continuous stream — **not** the Web UI.
 
 The speed asset is the **FastH3 Dense-DataFree student DiT** (4-step DMD2), not
 base MiniMax-H3 + a LoRA. On CUDA/Comfy that student ships as a pruned INT8
@@ -11,6 +9,8 @@ into the native fused layout `./h3` already loads, then keep h3.c’s own Metal
 INT8 activation path.
 
 ```bash
+git checkout feat/fasth3-live
+
 # 1) Apache/prompt assets (optional refresh)
 ./scripts/sync_fasth3_live_bucket.sh
 
@@ -24,31 +24,91 @@ hf download FastVideo/FastVideo-FastH3-4-step-Preview-v1-Dense-DataFree \
 ./scripts/prepare_fasth3_native_tree.sh
 
 # 4) Stream (dashboard + MPEG-TS; Play starts generation)
-export H3_FORCE_TENSOROPS=1 H3_AV=$PWD/scripts/h3-av
-python3 liveserver.py --host 0.0.0.0 --port 9000 -v
+python liveserver.py
 # → http://127.0.0.1:9000/   browser player, or VLC → …/stream.ts
 # Play fps adapts to measured gen time (faster Mac → higher fps).
 # Pin: python liveserver.py --fps 2.0
-# Custom prompt: dashboard → Custom → Apply to next clip (no stream stop)
 ```
 
 ## Recipe
 
-| Knob | Default |
+| Knob | Default (`live` preset) |
 |------|---------|
-| DiT | `models/MiniMax-H3-FastH3` (converted FastH3 student) |
-| Canvas | 448×448 (DiT/VAE render 320×320, scaled up) |
-| Frames | 124 (~5.2 s at 24 fps authored; 362 once sustain rises) |
+| DiT | `models/MiniMax-H3-FusedTurbo*` if present, else `MiniMax-H3-FastH3(-INT8)` |
+| Canvas | 448×448 out · **render 384×384** · token-reduction **off** |
+| Frames | 124 (~5.2 s authored; preset `long` = 243; 362 once sustain rises) |
 | Steps | 4 (DMD ladder ≈ stock `--steps 4` under shift 12/3) |
 | Layers / reuse | 50 / 1 (do not thin a 4-step student) |
-| Token reduction | on (Metal; `--no-token-reduction` to disable) |
+| Token reduction | **off** in `live`/`sharp` (on only for `draft`) |
+| Curated cast | 50% curated / 50% full; 70% ensemble-bias; **max 1–3** cast |
 | INT8 row FC2 | on when TensorOps available (`--no-int8-row-fc2` to disable) |
 | LoRA | none (student replaces the base DiT) |
 | Play fps | **adaptive** (`--fps 0`, default): `frames / (gen_s × --margin)`; clamp `--min-fps`/`--max-fps`. Fixed: `--fps N` |
 
+**Prompt pool (default):** The Office only — `data/fasth3_live/prompts_scenes_office.txt` × `h3_characters_office.json`. Scenes are slow stares / looking-at-camera (plus a few sleeping/semi-static beats for low play-fps), slight horror-thriller vibe; cast always `from The Office`, capped at **1–3** characters. Originals kept as `prompts_scenes.txt`, `prompts_scenes_2.txt`, `h3_characters.json`:
+
+```bash
+python liveserver.py \
+  --scenes data/fasth3_live/prompts_scenes.txt \
+          data/fasth3_live/prompts_scenes_2.txt \
+  --characters data/fasth3_live/h3_characters.json \
+  --max-cast 5
+```
+
+Quality presets (CLI `--quality-preset` / dashboard **Apply quality** → next clip):
+
+| Preset | render | TR | frames | Role |
+|--------|--------|----|--------|------|
+| `draft` | 320 | on | 124 | Legacy speed path — soft picture |
+| **`live`** | **384** | **off** | 124 | **Default** — continuous Live target |
+| `sharp` | 448 | off | 124 | jacokon-matched full canvas (slower) |
+| `long` | 384 | off | 243 | Longer clip when sustain allows |
+
 Engine: Metal **`./h3`** (antirez fork) — **not** MLX. Comfy INT8 ConvRot / Sage /
 Spectrum stay idea sources; we invent Metal equivalents (TensorOps on Metal 4
 chips including M3 Ultra, runtime int8, token reduction, warm FL2VA session).
+
+### jacokon ↔ Metal gap matrix
+
+| jacokon technique | Metal Live |
+|-------------------|------------|
+| Full 448² DiT+VAE (no render-down) | Preset `sharp`; default is `live` @ 384 |
+| Dense-DataFree FastH3 student | ✅ converted native tree |
+| Fused turbo DiT (MATLOWAI) | Prefer `models/MiniMax-H3-FusedTurbo*` when present; Comfy INT8 ConvRot has **no** convert yet (`scripts/inspect_fused_turbo_for_native.py` — verified on jacokon’s FastH3 ConvRot file: native key names + `weight_scale` / `comfy_quant`). Stub: `scripts/prepare_fused_turbo_native_tree.sh` |
+| Sage / Spectrum / Sol / SLA | ❌ CUDA-only; Spectrum/Sol hurt quality — do not port |
+| nvfp4 TE / W4A8 VAE | ❌ speed/RAM only; skip for quality |
+| H3FastWriteVideo | N/A (PyAV retime) |
+| Ensemble scenes + curated cast | ✅ bias + curated-share + ensemble-only toggle |
+| Context-IR prompts | ✅ pool + custom wrap |
+
+**Draft cause (fixed):** earlier Live stacked **render 320 + token-reduction**. Internal ~102k px sits below jacokon’s ~200k-px flare floor, then upscales to 448. h3.c also warns against stacking TR with aggressive draft knobs. New default drops TR and raises render to 384.
+
+Ladder smoke (M3 Ultra, INT8 student, **22f** oneshot wall incl. cold load):
+
+| Arm | render | TR | wall |
+|-----|--------|----|------|
+| draft | 320 | on | **16.4 s** |
+| live | 384 | off | **22.7 s** |
+| sharp | 448 | off | **24.8 s** |
+
+`live` stays the default (clear step up from draft; continuous at 124f). `sharp` is only ~9% slower than `live` at 22f — use it when margin allows. Re-measure warm 124f after changing presets. `./scripts/live_quality_ladder.sh` reproduces the arms.
+
+### Warm Live profile (M3 Ultra, INT8 student, `live` 448 out / 384 render / 4 steps)
+
+**Rule:** only ship changes that improve measured sustain fps. No speculative knobs.
+
+| Phase (124f warm) | Wall | Share |
+|-------------------|------|-------|
+| Text encoder | ~2.9 s | ~4% |
+| DiT load | **0** if cache hit | — |
+| DiT denoise (GPU wait) | **~48 s** | **~71%** |
+| Video VAE decode | ~15 s | ~22% |
+| Audio + mux | ~1 s | ~1% |
+| **Sustain** | **~67 s/clip → ~1.8 fps** | |
+
+56f A/B (same host): cold ~37 s; equal-token DiT+VAE hit ~31 s (**−16%**). Without fixed text width, sequential Live prompts share a token count only **~1.5%** of the time → DiT miss every clip. Idle `!refs clear` / `!first clear` / `!last clear` used to call `h3_cache_clear` even when empty (fixed). Prepared DiT cache now rebinds text via `h3_dit_reset_run` (refine + maps); AdaLN stays resident.
+
+Optional `H3_PAD_TEXT_TOKENS=N` pads/truncates T2VA ids so every Live clip shares one DiT width. **Measured (56f, M3 Ultra):** cold pad-160 overhead **~0**; warm sustain **31.1 s vs 36.8 s nopad (−5.7 s/clip)** with DiT+VAE hit. `liveserver.py` defaults **`H3_PAD_TEXT_TOKENS=192`** (covers pool max ~185). Denoise GPU wait is the remaining Metal frontier (custom kernels welcome once profiles name the hotspot).
 
 ### Smoke (M3 Ultra, 448×448×22, 4 steps, token-reduction + int8-row-fc2)
 
@@ -60,10 +120,10 @@ chips including M3 Ultra, runtime int8, token reduction, warm FL2VA session).
 | Video VAE | ~3.8 s |
 | Audio VAE | ~0.3 s |
 
-Warm live clips skip encoder/DiT load after the first job. Measured M3 Ultra
-INT8 Live with **`--render-width/height 320`** (output still 448²×124, 4 steps):
+Historical M3 Ultra INT8 Live with **`--render-width/height 320`** (output still 448²×124, 4 steps):
 denoise **~21.2 s** + VAE **~7.0 s** → warm-ish **~29 s/clip**, sustain **~4.3 fps**
 (picture std≈59). Without render-320 the same host was ~68 s / ~1.8 fps.
+Default is now **384 / noTR** (`live`); re-measure sustain after changing presets.
 Env knobs (`H3_GPU_SAMPLER*`, single-tile VAE at 448) did not help; keep 2×2@256
 VAE tiles. Play fps defaults to adaptive so faster Macs raise the rate automatically.
 

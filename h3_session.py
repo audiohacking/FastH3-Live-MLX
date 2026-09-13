@@ -1,8 +1,10 @@
 """Resident interactive ``./h3`` session (PTY). One-shot spawn remains the fallback.
 
 h3.c's REPL uses linenoise, which needs a TTY. We drive it over a PTY, apply
-``!`` commands, then send the prompt. Ref2VA video/audio refs are not exposed as
-interactive commands (only ``!ref-image``), so those jobs stay one-shot.
+``!`` commands, then generate via ``!prompt-file`` (long FastH3 Live Context-IR
+prompts deadlock linenoise when pasted as a single line). Ref2VA video/audio
+refs are not exposed as interactive commands (only ``!ref-image``), so those
+jobs stay one-shot.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import select
 import shutil
 import struct
 import subprocess
+import tempfile
 import termios
 import time
 from collections.abc import Callable
@@ -297,36 +300,52 @@ class H3InteractiveSession:
         on_progress: ProgressCallback | None = None,
         timeout_s: float = GENERATE_TIMEOUT_S,
     ) -> Path:
-        line = session_prompt_line(prompt)
-        if not line:
+        text = (prompt or "").strip()
+        if not text:
             raise ValueError("prompt is required")
-        self._send_line(line)
-        collected: list[str] = []
+        # Long Live prompts deadlock linenoise over the PTY — write a file and
+        # use the !prompt-file command (local h3.c fork).
+        fd, path_str = tempfile.mkstemp(prefix="h3-prompt-", suffix=".txt")
+        prompt_path = Path(path_str)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(text)
+                if not text.endswith("\n"):
+                    fh.write("\n")
+            self._send_line(f"!prompt-file {prompt_path}")
+            collected: list[str] = []
 
-        def ready(buf: str) -> bool:
-            text = normalize_pty(buf)
-            return bool(_DONE_RE.search(text) and _PROMPT_RE.search(text)) or bool(
-                _ERROR_RE.search(text) and _PROMPT_RE.search(text) and "unknown command" not in text
-            )
+            def ready(buf: str) -> bool:
+                body = normalize_pty(buf)
+                return bool(_DONE_RE.search(body) and _PROMPT_RE.search(body)) or bool(
+                    _ERROR_RE.search(body)
+                    and _PROMPT_RE.search(body)
+                    and "unknown command" not in body
+                )
 
-        def on_chunk(chunk: str) -> None:
-            collected.append(chunk)
-            _echo_pty(chunk)
-            progress = parse_cli_progress(chunk)
-            if progress and on_progress:
-                on_progress(progress)
+            def on_chunk(chunk: str) -> None:
+                collected.append(chunk)
+                _echo_pty(chunk)
+                progress = parse_cli_progress(chunk)
+                if progress and on_progress:
+                    on_progress(progress)
 
-        buf = self._read_until(ready, timeout_s, on_chunk=on_chunk)
-        text = strip_ansi(buf)
-        done = parse_done_path(text)
-        if done and done.is_file():
-            return done
-        err = _ERROR_RE.findall(text)
-        if err:
-            raise RuntimeError(err[-1].strip())
-        if done:
-            raise RuntimeError(f"h3 reported {done} but the file is missing")
-        raise SessionError("interactive generate finished without Done -> path")
+            buf = self._read_until(ready, timeout_s, on_chunk=on_chunk)
+            body = strip_ansi(buf)
+            done = parse_done_path(body)
+            if done and done.is_file():
+                return done
+            err = _ERROR_RE.findall(body)
+            if err:
+                raise RuntimeError(err[-1].strip())
+            if done:
+                raise RuntimeError(f"h3 reported {done} but the file is missing")
+            raise SessionError("interactive generate finished without Done -> path")
+        finally:
+            try:
+                prompt_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def stop(self) -> None:
         self.alive = False

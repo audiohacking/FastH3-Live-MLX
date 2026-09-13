@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import queue
 import random
 import signal
@@ -40,16 +41,22 @@ from h3_backend import (  # noqa: E402
 from h3_live import (  # noqa: E402
     DEFAULT_CHARACTERS,
     DEFAULT_SCENES,
+    LIVE_CURATED_SHARE,
+    LIVE_ENSEMBLE_BIAS,
     LIVE_FRAMES,
     LIVE_HEIGHT,
     LIVE_LAYERS,
     LIVE_LORA_ID,
     LIVE_MARGIN_RATIO,
+    LIVE_MAX_CAST,
     LIVE_MAX_PLAY_FPS,
     LIVE_MIN_PLAY_FPS,
+    LIVE_MODEL_DIR_FUSED_TURBO_INT8_NAME,
+    LIVE_MODEL_DIR_FUSED_TURBO_NAME,
     LIVE_MODEL_DIR_INT8_NAME,
     LIVE_MODEL_DIR_NAME,
     LIVE_PLAY_FPS,
+    LIVE_QUALITY_PRESET,
     LIVE_RENDER_HEIGHT,
     LIVE_RENDER_WIDTH,
     LIVE_REUSE,
@@ -64,6 +71,14 @@ from h3_live.dashboard import (  # noqa: E402
     logs_after,
 )
 from h3_live.pace import adaptive_play_fps, ema  # noqa: E402
+from h3_live.presets import (  # noqa: E402
+    DEFAULT_PRESET,
+    PRESETS,
+    apply_preset_to_args,
+    get_preset,
+    presets_public,
+    recipe_label,
+)
 from h3_live.retime import feed_mpegts_to_sink, retime_to_mpegts  # noqa: E402
 from h3_live.scenes import PromptPool  # noqa: E402
 from h3_lora import catalog_entry, ensure_lora  # noqa: E402
@@ -115,6 +130,14 @@ class LiveState:
         self.custom_prompt = ""
         self.pool_scenes = 0
         self.next_prompt_note = "random pool"
+        # Quality recipe (Apply → next clip).
+        self.quality_preset = DEFAULT_PRESET
+        self.render_width = LIVE_RENDER_WIDTH
+        self.render_height = LIVE_RENDER_HEIGHT
+        self.token_reduction = LIVE_TOKEN_REDUCTION
+        self.ensemble_only = False
+        self.curated_share = LIVE_CURATED_SHARE
+        self.recipe_note = ""
 
     def _prune_watch_sessions_locked(self) -> list[str]:
         now = time.monotonic()
@@ -183,6 +206,14 @@ class LiveState:
                 "custom_preview": preview,
                 "pool_scenes": self.pool_scenes,
                 "next_prompt_note": self.next_prompt_note,
+                "quality_preset": self.quality_preset,
+                "render_width": self.render_width,
+                "render_height": self.render_height,
+                "token_reduction": self.token_reduction,
+                "ensemble_only": self.ensemble_only,
+                "curated_share": self.curated_share,
+                "recipe_note": self.recipe_note,
+                "presets": presets_public(),
             }
 
     def demand_count(self, ts_viewers: int) -> int:
@@ -331,6 +362,11 @@ class Broadcast:
                     if mode == "custom" and not text.strip():
                         self._json(400, {"ok": False, "error": "custom text required"})
                         return
+                    when = (
+                        "applies to next clip"
+                        if broadcast.state.generating
+                        else "ready for next clip"
+                    )
                     with broadcast.state.lock:
                         broadcast.state.prompt_mode = mode
                         if mode == "custom":
@@ -338,16 +374,113 @@ class Broadcast:
                             note = text.strip().replace("\n", " ")
                             if len(note) > 80:
                                 note = note[:77] + "…"
-                            broadcast.state.next_prompt_note = f"custom: {note}"
+                            if PromptPool.looks_like_context_ir(text):
+                                broadcast.state.next_prompt_note = f"custom IR: {note}"
+                            else:
+                                broadcast.state.next_prompt_note = f"custom idea→IR: {note}"
                         else:
                             broadcast.state.next_prompt_note = (
                                 f"random pool ({broadcast.state.pool_scenes} scenes)"
                             )
-                    log.info(
-                        "prompt mode → %s (%s)",
-                        mode,
-                        "applies to next clip" if broadcast.state.generating else "ready",
+                    if mode == "custom":
+                        raw = text.strip()
+                        if PromptPool.looks_like_context_ir(raw):
+                            log.info(
+                                "prompt applied: custom Context-IR (%d chars, %s)\n"
+                                "—— applied prompt ——\n%s\n—— end prompt ——",
+                                len(raw),
+                                when,
+                                raw,
+                            )
+                        else:
+                            preview = PromptPool.wrap_idea_as_live_prompt(raw)
+                            log.info(
+                                "prompt applied: short idea → Context-IR wrap (%s)\n"
+                                "—— idea ——\n%s\n"
+                                "—— wrapped preview (cast filled at generate) ——\n%s\n"
+                                "—— end prompt ——",
+                                when,
+                                raw,
+                                preview,
+                            )
+                    else:
+                        log.info(
+                            "prompt applied: random pool (%d scenes, %s)",
+                            broadcast.state.pool_scenes,
+                            when,
+                        )
+                elif action == "set_quality":
+                    preset_name = str(body.get("preset") or "").strip().lower()
+                    when = (
+                        "applies to next clip"
+                        if broadcast.state.generating
+                        else "ready for next clip"
                     )
+                    try:
+                        if preset_name:
+                            preset = get_preset(preset_name)
+                            with broadcast.state.lock:
+                                broadcast.state.quality_preset = preset.name
+                                broadcast.state.render_width = preset.render_width
+                                broadcast.state.render_height = preset.render_height
+                                broadcast.state.token_reduction = preset.token_reduction
+                                broadcast.state.frames = preset.frames
+                                if "ensemble_only" in body and body["ensemble_only"] is not None:
+                                    broadcast.state.ensemble_only = bool(body["ensemble_only"])
+                                if "curated_share" in body and body["curated_share"] is not None:
+                                    broadcast.state.curated_share = float(body["curated_share"])
+                                broadcast.state.recipe_note = recipe_label(
+                                    preset=preset.name,
+                                    width=broadcast.state.width,
+                                    height=broadcast.state.height,
+                                    render_width=preset.render_width,
+                                    render_height=preset.render_height,
+                                    frames=preset.frames,
+                                    token_reduction=preset.token_reduction,
+                                    steps=broadcast.state.steps,
+                                )
+                            log.info(
+                                "quality preset → %s (%s)\n%s",
+                                preset.name,
+                                when,
+                                broadcast.state.recipe_note,
+                            )
+                        else:
+                            # Partial overrides without named preset.
+                            with broadcast.state.lock:
+                                if "render_width" in body and body["render_width"] is not None:
+                                    broadcast.state.render_width = int(body["render_width"])
+                                if "render_height" in body and body["render_height"] is not None:
+                                    broadcast.state.render_height = int(body["render_height"])
+                                if "token_reduction" in body and body["token_reduction"] is not None:
+                                    broadcast.state.token_reduction = bool(
+                                        body["token_reduction"]
+                                    )
+                                if "frames" in body and body["frames"] is not None:
+                                    broadcast.state.frames = int(body["frames"])
+                                if "ensemble_only" in body and body["ensemble_only"] is not None:
+                                    broadcast.state.ensemble_only = bool(body["ensemble_only"])
+                                if "curated_share" in body and body["curated_share"] is not None:
+                                    broadcast.state.curated_share = float(body["curated_share"])
+                                broadcast.state.quality_preset = "custom"
+                                broadcast.state.recipe_note = recipe_label(
+                                    preset="custom",
+                                    width=broadcast.state.width,
+                                    height=broadcast.state.height,
+                                    render_width=broadcast.state.render_width,
+                                    render_height=broadcast.state.render_height,
+                                    frames=broadcast.state.frames,
+                                    token_reduction=broadcast.state.token_reduction,
+                                    steps=broadcast.state.steps,
+                                )
+                            log.info(
+                                "quality overrides (%s)\n%s",
+                                when,
+                                broadcast.state.recipe_note,
+                            )
+                    except (KeyError, TypeError, ValueError) as exc:
+                        self._json(400, {"ok": False, "error": str(exc)})
+                        return
                 else:
                     self._json(400, {"ok": False, "error": f"unknown action {action}"})
                     return
@@ -573,7 +706,7 @@ def resolve_lora(lora_id: str, scale: float | None) -> LoraRef:
 
 
 def resolve_live_model_dir(explicit: Path | None) -> Path:
-    """Prefer INT8 FastH3 student, then BF16, else stock MiniMax-H3."""
+    """Prefer fused-turbo native tree, then FastH3 INT8/BF16, else stock MiniMax-H3."""
     if explicit is not None:
         return Path(explicit).expanduser().resolve()
     root = default_model_dir().resolve().parent  # …/models
@@ -582,7 +715,12 @@ def resolve_live_model_dir(explicit: Path | None) -> Path:
         tr = candidate / "FL2VA" / "transformer"
         return tr.is_dir() and any(tr.glob("*.safetensors"))
 
-    for name in (LIVE_MODEL_DIR_INT8_NAME, LIVE_MODEL_DIR_NAME):
+    for name in (
+        LIVE_MODEL_DIR_FUSED_TURBO_INT8_NAME,
+        LIVE_MODEL_DIR_FUSED_TURBO_NAME,
+        LIVE_MODEL_DIR_INT8_NAME,
+        LIVE_MODEL_DIR_NAME,
+    ):
         candidate = root / name
         if usable(candidate):
             return candidate.resolve()
@@ -597,23 +735,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--model-dir",
         type=Path,
         default=None,
-        help="h3 -d root (default: models/MiniMax-H3-FastH3 if present)",
+        help="h3 -d root (default: FusedTurbo / FastH3 student if present)",
     )
     p.add_argument("--width", type=int, default=LIVE_WIDTH)
     p.add_argument("--height", type=int, default=LIVE_HEIGHT)
     p.add_argument(
+        "--quality-preset",
+        default=LIVE_QUALITY_PRESET,
+        choices=sorted(PRESETS.keys()),
+        help="draft|live|sharp|long — sets render/TR/frames (default: live)",
+    )
+    p.add_argument(
         "--render-width",
         type=int,
-        default=LIVE_RENDER_WIDTH,
-        help="internal DiT/VAE width (0 = same as --width)",
+        default=None,
+        help="internal DiT/VAE width (0 = same as --width; overrides preset)",
     )
     p.add_argument(
         "--render-height",
         type=int,
-        default=LIVE_RENDER_HEIGHT,
-        help="internal DiT/VAE height (0 = same as --height)",
+        default=None,
+        help="internal DiT/VAE height (0 = same as --height; overrides preset)",
     )
-    p.add_argument("--frames", type=int, default=LIVE_FRAMES)
+    p.add_argument("--frames", type=int, default=None, help="overrides quality preset")
     p.add_argument("--steps", type=int, default=LIVE_STEPS)
     p.add_argument("--layers", type=int, default=LIVE_LAYERS)
     p.add_argument("--reuse", type=int, default=LIVE_REUSE)
@@ -634,8 +778,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--token-reduction",
         action=argparse.BooleanOptionalAction,
-        default=LIVE_TOKEN_REDUCTION,
-        help="pair middle-block video tokens (Metal speed)",
+        default=None,
+        help="pair middle-block video tokens (overrides preset)",
     )
     p.add_argument(
         "--int8-row-fc2",
@@ -662,7 +806,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="scene file (repeatable; replaces defaults when set)",
     )
     p.add_argument("--characters", type=Path, default=DEFAULT_CHARACTERS)
-    p.add_argument("--curated-share", type=float, default=0.30)
+    p.add_argument("--curated-share", type=float, default=LIVE_CURATED_SHARE)
+    p.add_argument(
+        "--ensemble-only",
+        action="store_true",
+        help="draw only 3-character ensemble scenes",
+    )
+    p.add_argument(
+        "--ensemble-bias",
+        type=float,
+        default=LIVE_ENSEMBLE_BIAS,
+        help="probability of preferring an ensemble scene when available (0–1)",
+    )
+    p.add_argument(
+        "--max-cast",
+        type=int,
+        default=LIVE_MAX_CAST,
+        help="drop scenes with more than N character slots (default 3)",
+    )
     p.add_argument("--prefill", type=int, default=2, help="clips to buffer before URL")
     p.add_argument("--stretch", default="rubberband")
     p.add_argument("--vbitrate", default="4M")
@@ -670,7 +831,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--out-dir", type=Path, default=None)
     p.add_argument("--pace", action="store_true", help="ffmpeg -re pace if available")
     p.add_argument("-v", "--verbose", action="store_true")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    # Capture explicit overrides (None = use preset).
+    ov_rw, ov_rh = args.render_width, args.render_height
+    ov_frames, ov_tr = args.frames, args.token_reduction
+    apply_preset_to_args(args, get_preset(args.quality_preset))
+    if ov_rw is not None:
+        args.render_width = ov_rw
+    if ov_rh is not None:
+        args.render_height = ov_rh
+    if ov_frames is not None:
+        args.frames = ov_frames
+    if ov_tr is not None:
+        args.token_reduction = ov_tr
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -686,22 +860,35 @@ def main(argv: list[str] | None = None) -> int:
         scene_paths,
         args.characters,
         curated_share=args.curated_share,
+        ensemble_only=bool(args.ensemble_only),
+        ensemble_bias=float(args.ensemble_bias),
+        max_cast=int(args.max_cast),
         explicit=bool(args.scenes),
     )
     counts = pool.counts()
     log.info(
-        "prompt pool: %s = %d scenes × %d characters (%d curated, %.0f%% curated draws)",
+        "prompt pool: %s = %d scenes × %d characters (%d curated, %.0f%% curated draws, "
+        "ensemble_bias=%.0f%%%s)",
         " + ".join(f"{n} from {Path(p).name}" for p, n in counts.items()),
         sum(counts.values()),
         len(pool.full),
         len(pool.curated),
         args.curated_share * 100,
+        args.ensemble_bias * 100,
+        ", ensemble-only" if args.ensemble_only else "",
     )
 
     model_dir = resolve_live_model_dir(args.model_dir)
-    using_student = any(
+    student_names = (
+        LIVE_MODEL_DIR_NAME,
+        LIVE_MODEL_DIR_INT8_NAME,
+        LIVE_MODEL_DIR_FUSED_TURBO_NAME,
+        LIVE_MODEL_DIR_FUSED_TURBO_INT8_NAME,
+    )
+    using_student = any(name in model_dir.parts for name in student_names)
+    using_fused = any(
         name in model_dir.parts
-        for name in (LIVE_MODEL_DIR_NAME, LIVE_MODEL_DIR_INT8_NAME)
+        for name in (LIVE_MODEL_DIR_FUSED_TURBO_NAME, LIVE_MODEL_DIR_FUSED_TURBO_INT8_NAME)
     )
     loras: list[LoraRef] = []
     if args.lora:
@@ -721,8 +908,18 @@ def main(argv: list[str] | None = None) -> int:
             "hf download FastVideo/…-Dense-DataFree --include 'transformer/*'",
             model_dir,
         )
+    elif using_fused:
+        log.info("Fused-turbo DiT at %s (no LoRA)", model_dir)
     else:
         log.info("FastH3 student DiT at %s (no LoRA)", model_dir)
+
+    # Overlap DiT command encoding with GPU work on Metal (M3 Ultra inherits the
+    # M5 GPU-sampler gate via TensorOps, which otherwise disables the split).
+    os.environ.setdefault("H3_DIT_COMMAND_BLOCKS", "30")
+    # Fixed text width so prepared DiT stays resident across Live prompts
+    # (natural token counts rarely match; A/B: pad-160 warm −5.7s/clip @56f,
+    # cold pad overhead ~0). 192 covers observed pool max ~185.
+    os.environ.setdefault("H3_PAD_TEXT_TOKENS", "192")
 
     engine = H3Engine(model_dir=model_dir)
     info = engine.info()
@@ -743,6 +940,22 @@ def main(argv: list[str] | None = None) -> int:
     state.cancel_fn = engine.request_cancel
     state.pool_scenes = sum(counts.values())
     state.next_prompt_note = f"random pool ({state.pool_scenes} scenes)"
+    state.quality_preset = args.quality_preset
+    state.render_width = args.render_width
+    state.render_height = args.render_height
+    state.token_reduction = bool(args.token_reduction)
+    state.ensemble_only = bool(args.ensemble_only)
+    state.curated_share = float(args.curated_share)
+    state.recipe_note = recipe_label(
+        preset=state.quality_preset,
+        width=state.width,
+        height=state.height,
+        render_width=state.render_width,
+        render_height=state.render_height,
+        frames=state.frames,
+        token_reduction=state.token_reduction,
+        steps=state.steps,
+    )
 
     broadcast = Broadcast(args.host, args.port, state)
     mux = PaceMux(broadcast, use_re=args.pace)
@@ -761,13 +974,11 @@ def main(argv: list[str] | None = None) -> int:
 
     adaptive = args.fps <= 0
     log.info(
-        "recipe %dx%d (render %dx%d) frames=%d steps=%d play_fps=%s margin=%.2f",
-        args.width,
-        args.height,
-        args.render_width or args.width,
-        args.render_height or args.height,
-        args.frames,
-        args.steps,
+        "recipe %s",
+        state.recipe_note,
+    )
+    log.info(
+        "play_fps=%s margin=%.2f",
         "adaptive" if adaptive else f"{args.fps:.2f}",
         args.margin,
     )
@@ -798,19 +1009,38 @@ def main(argv: list[str] | None = None) -> int:
             with state.lock:
                 mode = state.prompt_mode
                 custom = state.custom_prompt
+                render_w = state.render_width
+                render_h = state.render_height
+                frames = state.frames
+                token_reduction = state.token_reduction
+                recipe = state.recipe_note
+                pool.ensemble_only = state.ensemble_only
+                pool.curated_share = state.curated_share
             if mode == "custom" and custom.strip():
-                prompt, cast = pool.fill_names(custom)
+                was_idea = not PromptPool.looks_like_context_ir(custom)
+                prompt, cast = pool.normalize_custom(custom)
                 scene_idx = -1
+                source = (
+                    "custom · idea→Context-IR wrap"
+                    if was_idea
+                    else "custom · Context-IR as pasted"
+                )
             else:
                 prompt, cast, scene_idx = pool.draw()
+                source = f"pool scene {scene_idx:03d}"
             seed = args.seed if args.seed is not None else random.randint(1, 2**31 - 1)
             mp4 = out_root / f"clip_{clip_i:04d}.mp4"
             log.info(
-                "clip %04d  %s  seed %s  %s",
+                "clip %04d  %s  seed %s  cast=%s\n"
+                "%s\n"
+                "—— prompt sent to h3 (%d chars) ——\n%s\n—— end prompt ——",
                 clip_i,
-                f"custom" if scene_idx < 0 else f"scene {scene_idx:03d}",
+                source,
                 seed,
-                cast[:80],
+                cast,
+                recipe,
+                len(prompt),
+                prompt,
             )
             with state.lock:
                 state.generating = True
@@ -820,19 +1050,19 @@ def main(argv: list[str] | None = None) -> int:
                 output_path=mp4,
                 width=args.width,
                 height=args.height,
-                render_width=args.render_width or None,
-                render_height=args.render_height or None,
-                num_frames=args.frames,
+                render_width=render_w or None,
+                render_height=render_h or None,
+                num_frames=frames,
                 quality="four_step",
                 steps=args.steps,
                 layers=args.layers,
                 reuse=args.reuse,
-                token_reduction=bool(args.token_reduction),
+                token_reduction=bool(token_reduction),
                 seed=seed,
                 ssd_streaming=False,
                 int8_row_fc2=bool(args.int8_row_fc2),
                 profile=False,
-                oneshot=True,  # long Live prompts deadlock linenoise on PTY
+                oneshot=False,  # warm FL2VA via !prompt-file (avoids linenoise deadlock)
                 loras=loras,
                 mode="t2va",
             )
@@ -862,7 +1092,7 @@ def main(argv: list[str] | None = None) -> int:
 
             if adaptive:
                 play_fps = adaptive_play_fps(
-                    args.frames,
+                    frames,
                     gen_ema,
                     margin_ratio=args.margin,
                     min_fps=args.min_fps,
@@ -870,9 +1100,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
             else:
                 play_fps = float(args.fps)
-            play_seconds = args.frames / play_fps
+            play_seconds = frames / play_fps
             margin = play_seconds - gen_s
-            sustain = args.frames / avg if avg > 0 else 0.0
+            sustain = frames / avg if avg > 0 else 0.0
             status = "OK" if margin >= 0 else "BEHIND"
             log.info(
                 "gen %.1fs (avg5 %.1f ema %.1f)  play_fps %.2f (%.1fs)  "
@@ -894,6 +1124,7 @@ def main(argv: list[str] | None = None) -> int:
                 state.last_clip = clip_i
                 state.last_scene = scene_idx
                 state.last_cast = cast[:120]
+                state.frames = frames
 
             try:
                 ts = retime_to_mpegts(

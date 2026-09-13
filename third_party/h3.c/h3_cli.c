@@ -174,6 +174,7 @@ static void print_help(void) {
     puts("  !output [DIR]            Set or show the output directory");
     puts("  !save [PATH]             Copy the last generated video");
     puts("  !again                   Repeat the last prompt");
+    puts("  !prompt-file PATH        Generate from a UTF-8 prompt file");
     puts("  !cache                   Show reusable-session cache state");
     puts("  !cache clear             Clear reusable-session caches");
     puts("  !quit                    Exit");
@@ -268,9 +269,12 @@ static int copy_reference(h3_reference *destination,
 }
 
 static void clear_references(h3_cli_state *state) {
+    if (!state->params.reference_count) return;
     for (size_t index = 0; index < state->params.reference_count; index++)
         free_reference(&state->references[index]);
     state->params.reference_count = 0;
+    /* Drop prepared DiT / VAE only when refs actually changed — idle
+       `!refs clear` between Live clips must not thrash the warm cache. */
     h3_cache_clear(state->ctx);
 }
 
@@ -369,8 +373,13 @@ static void set_anchor(h3_cli_state *state, int first, char *argument) {
         return;
     }
     if (!strcasecmp(argument, "clear")) {
+        if (!*slot) {
+            printf("%s: none\n", name);
+            return;
+        }
         free(*slot);
         *slot = NULL;
+        /* Same as !refs clear: only invalidate when an anchor was present. */
         h3_cache_clear(state->ctx);
         printf("%s: none\n", name);
         return;
@@ -465,6 +474,59 @@ static int generate(h3_cli_state *state, const char *prompt) {
     return 1;
 }
 
+/* Read an entire UTF-8 prompt file. Avoids linenoise's long-line PTY deadlock
+ * on FastH3 Live Context-IR blocks (often 1–2 KB with dialogue tags). */
+static char *read_prompt_file(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (!file) {
+        fprintf(stderr, "h3: cannot open prompt file %s: %s\n", path,
+                strerror(errno));
+        return NULL;
+    }
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fprintf(stderr, "h3: cannot seek prompt file %s: %s\n", path,
+                strerror(errno));
+        fclose(file);
+        return NULL;
+    }
+    long size = ftell(file);
+    if (size < 0 || size > 1024 * 1024) {
+        fprintf(stderr, "h3: prompt file %s is empty or too large\n", path);
+        fclose(file);
+        return NULL;
+    }
+    if (fseek(file, 0, SEEK_SET) != 0) {
+        fprintf(stderr, "h3: cannot rewind prompt file %s: %s\n", path,
+                strerror(errno));
+        fclose(file);
+        return NULL;
+    }
+    char *text = malloc((size_t)size + 1);
+    if (!text) {
+        fprintf(stderr, "h3: out of memory reading prompt file\n");
+        fclose(file);
+        return NULL;
+    }
+    size_t got = fread(text, 1, (size_t)size, file);
+    fclose(file);
+    if (got != (size_t)size) {
+        free(text);
+        fprintf(stderr, "h3: short read on prompt file %s\n", path);
+        return NULL;
+    }
+    text[size] = '\0';
+    while (size > 0 && (text[size - 1] == '\n' || text[size - 1] == '\r' ||
+                        text[size - 1] == ' ' || text[size - 1] == '\t')) {
+        text[--size] = '\0';
+    }
+    if (!size) {
+        free(text);
+        fprintf(stderr, "h3: prompt file %s is empty\n", path);
+        return NULL;
+    }
+    return text;
+}
+
 static int set_integer(char *argument, const char *name, int minimum,
                        int maximum, int *slot) {
     argument = skip_spaces(argument);
@@ -496,6 +558,18 @@ static int process_command(h3_cli_state *state, char *line, int *repeat) {
     else if (!strcasecmp(command, "again")) {
         if (!state->last_prompt) fprintf(stderr, "h3: no previous prompt\n");
         else *repeat = 1;
+    } else if (!strcasecmp(command, "prompt-file")) {
+        if (!*argument) {
+            fprintf(stderr, "h3: usage: !prompt-file PATH\n");
+        } else {
+            char *prompt = read_prompt_file(argument);
+            if (prompt) {
+                printf("Prompt file: %s (%zu chars)\n", argument, strlen(prompt));
+                fflush(stdout);
+                generate(state, prompt);
+                free(prompt);
+            }
+        }
     } else if (!strcasecmp(command, "seed")) {
         if (!*argument) {
             if (state->random_seed) puts("Seed: random");

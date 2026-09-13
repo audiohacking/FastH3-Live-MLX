@@ -77,9 +77,12 @@ h3_dit *h3_dit_load_conditioned(
                          char *error, size_t error_size);
 void h3_dit_free(h3_dit *dit);
 
-/* Reset mutable sampler state and replace seed-dependent condition rows before
- * reusing an otherwise identical prepared transformer. */
+/* Rebind prompt text (token refine + modulation maps) and condition rows on a
+ * resident prepared transformer. Requires text->tokens == the original load
+ * width; callers should pad Live prompts (H3_PAD_TEXT_TOKENS) so the width is
+ * stable across clips. */
 int h3_dit_reset_run(h3_dit *dit,
+                     const h3_text_embedding *text,
                      const float *condition_video_rows,
                      size_t condition_video_elements,
                      const float *condition_audio_rows,

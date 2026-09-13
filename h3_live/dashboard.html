@@ -112,6 +112,18 @@
     #promptText:disabled { opacity: 0.45; }
     .prompt-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
     .prompt-note { font-family: var(--mono); font-size: 0.7rem; color: var(--muted); }
+    .quality-box {
+      margin: 0 1rem 1rem; padding: 0.75rem; border: 1px solid var(--line); border-radius: 4px;
+      display: grid; gap: 0.55rem;
+    }
+    .quality-box label { font-size: 0.72rem; color: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; }
+    .quality-modes { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; font-size: 0.85rem; }
+    .quality-modes label {
+      text-transform: none; letter-spacing: 0; color: var(--ink);
+      display: flex; gap: 0.35rem; align-items: center; cursor: pointer;
+    }
+    .quality-toggles { display: flex; flex-wrap: wrap; gap: 1rem; font-size: 0.82rem; }
+    .quality-toggles label { display: flex; gap: 0.35rem; align-items: center; cursor: pointer; color: var(--ink); }
   </style>
 </head>
 <body>
@@ -133,6 +145,22 @@
         <button id="btnMute" class="secondary" type="button">Unmute</button>
       </div>
       <div class="meta" id="clipMeta">—</div>
+      <div class="quality-box">
+        <label>Quality (next clip)</label>
+        <div class="quality-modes" id="qualityModes">
+          <label><input type="radio" name="qualityPreset" value="draft" /> draft 320+TR</label>
+          <label><input type="radio" name="qualityPreset" value="live" checked /> live 384</label>
+          <label><input type="radio" name="qualityPreset" value="sharp" /> sharp 448</label>
+          <label><input type="radio" name="qualityPreset" value="long" /> long 243f</label>
+        </div>
+        <div class="quality-toggles">
+          <label><input type="checkbox" id="ensembleOnly" /> Ensemble-only scenes</label>
+        </div>
+        <div class="prompt-actions">
+          <button id="btnApplyQuality" type="button">Apply quality</button>
+          <span class="prompt-note" id="qualityNote">Default live = 384² render, no token-reduction. sharp = full 448 (slower).</span>
+        </div>
+      </div>
       <div class="prompt-box">
         <label>Next clip prompt</label>
         <div class="prompt-modes">
@@ -140,10 +168,10 @@
           <label><input type="radio" name="promptMode" value="custom" /> Custom</label>
         </div>
         <textarea id="promptText" disabled spellcheck="false"
-          placeholder="Select Custom, paste a full H3 prompt, then Apply. {NAME} / {NAME2} fill from the cast pool."></textarea>
+          placeholder="Short idea (auto-wrapped into Live Context-IR) or paste a full pool-style prompt with integrated_multimodal_description / soundscape / music."></textarea>
         <div class="prompt-actions">
           <button id="btnApplyPrompt" type="button">Apply</button>
-          <span class="prompt-note" id="promptNote">Draft is local until you Apply — then it runs on the next clip.</span>
+          <span class="prompt-note" id="promptNote">Draft is local until Apply. Short ideas are wrapped like pool scenes; bare one-liners alone make H3 hallucinate.</span>
         </div>
       </div>
     </section>
@@ -169,6 +197,10 @@
     const promptNote = document.getElementById("promptNote");
     const btnApplyPrompt = document.getElementById("btnApplyPrompt");
     const promptModeInputs = () => [...document.querySelectorAll('input[name="promptMode"]')];
+    const qualityNote = document.getElementById("qualityNote");
+    const btnApplyQuality = document.getElementById("btnApplyQuality");
+    const ensembleOnly = document.getElementById("ensembleOnly");
+    const qualityInputs = () => [...document.querySelectorAll('input[name="qualityPreset"]')];
 
     let player = null;
     let pausedGen = false;
@@ -181,6 +213,9 @@
     let promptHydrated = false;
     let appliedMode = "random";
     let appliedText = "";
+    let qualityHydrated = false;
+    let appliedPreset = "live";
+    let appliedEnsemble = false;
     const sessionId = (crypto.randomUUID && crypto.randomUUID()) ||
       ("s" + Math.random().toString(16).slice(2) + Date.now().toString(16));
 
@@ -283,6 +318,61 @@
         promptNote.textContent = "Apply failed — check the server.";
       } finally {
         btnApplyPrompt.disabled = false;
+      }
+    });
+
+    function selectedQualityPreset() {
+      const el = qualityInputs().find((i) => i.checked);
+      return el ? el.value : "live";
+    }
+
+    function qualityDirty() {
+      return selectedQualityPreset() !== appliedPreset ||
+        !!ensembleOnly.checked !== !!appliedEnsemble;
+    }
+
+    function updateQualityNote(s) {
+      const note = (s && s.recipe_note) || "";
+      if (qualityDirty()) {
+        qualityNote.textContent = "Draft quality — Apply to use on the next clip.";
+      } else if (note) {
+        qualityNote.textContent = "Applied: " + note;
+      } else {
+        qualityNote.textContent = "Default live = 384² render, no token-reduction.";
+      }
+    }
+
+    qualityInputs().forEach((input) => {
+      input.addEventListener("change", () => updateQualityNote(lastStatus));
+    });
+    ensembleOnly.addEventListener("change", () => updateQualityNote(lastStatus));
+
+    btnApplyQuality.addEventListener("click", async () => {
+      const preset = selectedQualityPreset();
+      btnApplyQuality.disabled = true;
+      try {
+        const r = await fetch("/api/control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "set_quality",
+            preset,
+            ensemble_only: !!ensembleOnly.checked,
+            session: sessionId,
+          }),
+        });
+        const j = await r.json();
+        if (!j.ok) {
+          qualityNote.textContent = j.error || "Apply failed";
+          return;
+        }
+        appliedPreset = preset;
+        appliedEnsemble = !!ensembleOnly.checked;
+        refreshStatus();
+      } catch (_) {
+        qualityNote.textContent = "Apply failed — check the server.";
+      } finally {
+        btnApplyQuality.disabled = false;
       }
     });
 
@@ -410,9 +500,8 @@
           metric("Viewers", `${s.viewers ?? 0} ts · ${s.watchers ?? 0} web`),
           metric("Last gen", s.last_gen_s != null ? `${s.last_gen_s.toFixed(1)}s` : "—"),
           metric("Margin", s.margin_s != null ? `${s.margin_s >= 0 ? "+" : ""}${s.margin_s.toFixed(1)}s` : "—", marginCls),
-          metric("Recipe", `${s.width}×${s.height} · ${s.frames}f · ${s.steps} step · ${
-            s.play_fps > 0 ? s.play_fps.toFixed(2) : "…"
-          } fps`),
+          metric("Recipe", s.recipe_note || `${s.width}×${s.height} · ${s.frames}f · ${s.steps} step`),
+          metric("Play fps", s.play_fps > 0 ? s.play_fps.toFixed(2) : "…"),
           metric("Gen", s.paused ? "paused" : (s.generating ? "running" : "waiting"), s.paused ? "warn" : ""),
           metric("Chip", s.chip || "—"),
           metric("Next prompt", s.next_prompt_note || s.prompt_mode || "—"),
@@ -427,6 +516,16 @@
           updatePromptNote();
         } else if (!draftIsDirty()) {
           updatePromptNote();
+        }
+        if (!qualityHydrated) {
+          appliedPreset = s.quality_preset || "live";
+          appliedEnsemble = !!s.ensemble_only;
+          qualityInputs().forEach((i) => { i.checked = i.value === appliedPreset; });
+          ensembleOnly.checked = appliedEnsemble;
+          qualityHydrated = true;
+          updateQualityNote(s);
+        } else if (!qualityDirty()) {
+          updateQualityNote(s);
         }
         if (s.pool_scenes) {
           promptText.placeholder =

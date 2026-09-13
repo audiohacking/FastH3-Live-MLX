@@ -868,6 +868,7 @@ static int refine_text(h3_dit *dit, const h3_text_embedding *text,
                              error, error_size);
     size_t rows = dit->text_rows;
     if (ok && final_norm) {
+        free_tensor(&dit->refined_text);
         dit->refined_text = h3_gpu_tensor_new_bf16(dit->gpu, rows * HIDDEN);
         norm = h3_gpu_tensor_new_bf16(dit->gpu, rows * HIDDEN);
         qkv = h3_gpu_tensor_new_bf16(dit->gpu, rows * INNER * 3);
@@ -1044,9 +1045,31 @@ static int prepare_rope(h3_dit *dit, char *error, size_t error_size) {
     return ok;
 }
 
+static void free_modulation_maps(h3_dit *dit) {
+    if (!dit || !dit->schedule) return;
+    int steps = h3_dit_schedule_steps(dit->schedule);
+    if (dit->row_maps) for (int step = 0; step < steps; step++)
+        h3_gpu_tensor_free(dit->row_maps[step]);
+    if (dit->reduced_row_maps) for (int step = 0; step < steps; step++)
+        h3_gpu_tensor_free(dit->reduced_row_maps[step]);
+    if (dit->final_audio_maps) for (int step = 0; step < steps; step++)
+        h3_gpu_tensor_free(dit->final_audio_maps[step]);
+    if (dit->final_video_maps) for (int step = 0; step < steps; step++)
+        h3_gpu_tensor_free(dit->final_video_maps[step]);
+    free(dit->row_maps);
+    free(dit->reduced_row_maps);
+    free(dit->final_audio_maps);
+    free(dit->final_video_maps);
+    dit->row_maps = NULL;
+    dit->reduced_row_maps = NULL;
+    dit->final_audio_maps = NULL;
+    dit->final_video_maps = NULL;
+}
+
 static int prepare_maps(h3_dit *dit, const h3_text_embedding *text,
                         char *error, size_t error_size) {
     int steps = h3_dit_schedule_steps(dit->schedule);
+    free_modulation_maps(dit);
     dit->row_maps = calloc((size_t)steps, sizeof(*dit->row_maps));
     if (dit->token_reduction)
         dit->reduced_row_maps = calloc((size_t)steps,
@@ -2469,6 +2492,7 @@ size_t h3_dit_audio_elements(const h3_dit *dit) {
 }
 
 int h3_dit_reset_run(h3_dit *dit,
+                     const h3_text_embedding *text,
                      const float *condition_video_rows,
                      size_t condition_video_elements,
                      const float *condition_audio_rows,
@@ -2477,6 +2501,13 @@ int h3_dit_reset_run(h3_dit *dit,
     if (error && error_size) error[0] = '\0';
     if (!dit) {
         fail(error, error_size, "prepared DiT is absent");
+        return 0;
+    }
+    if (!text || !text->values || text->width != TEXT_DIM ||
+        text->tokens != (size_t)dit->text_rows) {
+        fail(error, error_size,
+             "prepared DiT text width does not match (%zu vs %u)",
+             text ? text->tokens : 0, dit->text_rows);
         return 0;
     }
     size_t wanted_video =
@@ -2490,6 +2521,8 @@ int h3_dit_reset_run(h3_dit *dit,
         fail(error, error_size, "prepared DiT condition rows do not match");
         return 0;
     }
+    if (!refine_text(dit, text, error, error_size)) return 0;
+    if (!prepare_maps(dit, text, error, error_size)) return 0;
     if ((wanted_video && !h3_gpu_tensor_write_f32_range(
              dit->video_input, 0, condition_video_rows, wanted_video)) ||
         (wanted_audio && !h3_gpu_tensor_write_f32_range(
@@ -3082,19 +3115,7 @@ int h3_dit_denoise_euler(h3_dit *dit, float *video_latent,
 
 void h3_dit_free(h3_dit *dit) {
     if (!dit) return;
-    int steps = h3_dit_schedule_steps(dit->schedule);
-    if (dit->row_maps) for (int step = 0; step < steps; step++)
-        h3_gpu_tensor_free(dit->row_maps[step]);
-    if (dit->reduced_row_maps) for (int step = 0; step < steps; step++)
-        h3_gpu_tensor_free(dit->reduced_row_maps[step]);
-    if (dit->final_audio_maps) for (int step = 0; step < steps; step++)
-        h3_gpu_tensor_free(dit->final_audio_maps[step]);
-    if (dit->final_video_maps) for (int step = 0; step < steps; step++)
-        h3_gpu_tensor_free(dit->final_video_maps[step]);
-    free(dit->row_maps);
-    free(dit->reduced_row_maps);
-    free(dit->final_audio_maps);
-    free(dit->final_video_maps);
+    free_modulation_maps(dit);
     free_tensor(&dit->refined_text);
     free_tensor(&dit->rope_cos);
     free_tensor(&dit->rope_sin);
