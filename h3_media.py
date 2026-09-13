@@ -135,6 +135,18 @@ RESOLUTION_PRESETS = [
         guidance="Native 8×8 token grid with automatic low-resolution RoPE. Keep token reduction off.",
     ),
     _canvas(
+        "448x448",
+        448,
+        448,
+        aspect="1:1",
+        group="Square",
+        label="1:1 · 448 × 448 — FastH3 Live",
+        guidance=(
+            "FastH3 Live default canvas (~200k px). Used by liveserver.py with "
+            "4-step FastH3 LoRA and 362 frames."
+        ),
+    ),
+    _canvas(
         "512x512",
         512,
         512,

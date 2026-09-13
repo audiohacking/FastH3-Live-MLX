@@ -418,15 +418,20 @@ export default function App() {
       selectClipId(clip.id);
       setChainId(clip.chain_id);
       if (!config) return;
-      const snap = snapshotFromClip(clip, config, {
-        numSteps: config.defaults.num_steps,
-        layers: config.defaults.layers ?? H3_DEFAULT_LAYERS,
-        reuse: config.defaults.reuse ?? H3_DEFAULT_REUSE,
-        quality: config.defaults.quality ?? "fast",
-      });
+      const snap = snapshotFromClip(
+        clip,
+        config,
+        {
+          numSteps: config.defaults.num_steps,
+          layers: config.defaults.layers ?? H3_DEFAULT_LAYERS,
+          reuse: config.defaults.reuse ?? H3_DEFAULT_REUSE,
+          quality: config.defaults.quality ?? "fast",
+        },
+        loraPresets,
+      );
       setPrompt(snap.prompt);
       setMode(snap.mode);
-      setRouting(snap.mode === "ref2va" ? "ref2va" : snap.mode === "t2va" ? "auto" : "fl2va");
+      setRouting(snap.routing);
       setResolutionId(snap.resolutionId);
       setDurationId(snap.durationId);
       setClipMultiplier(snap.clipMultiplier);
@@ -435,8 +440,28 @@ export default function App() {
       setReuse(snap.reuse);
       setSeed(snap.seed);
       setQuality(snap.quality);
+      setRefs(snap.refs);
+      setImagePath(snap.imagePath);
+      setImageName(snap.imageName);
+      setEndImagePath(snap.endImagePath);
+      setEndImageName(snap.endImageName);
+      setSelectedCastIds(
+        snap.selectedCastIds.filter((id) => castMembers.some((m) => m.id === id)),
+      );
+      if (snap.tokenReduction !== null) setTokenReduction(snap.tokenReduction);
+      if (snap.ssdStreaming !== null) setSsdStreaming(snap.ssdStreaming);
+      setLoraPresetIds(snap.loraPresetIds);
+      setTurboEnabled(snap.turboEnabled);
+      if (snap.turboTier === "draft" || snap.turboTier === "medium" || snap.turboTier === "good") {
+        setTurboTier(snap.turboTier);
+      }
+      if (snap.missingMedia.length > 0) {
+        setError(
+          `Restored settings, but missing from disk: ${snap.missingMedia.join(", ")}`,
+        );
+      }
     },
-    [config, selectClipId],
+    [config, loraPresets, castMembers, selectClipId],
   );
 
   // Hydrate composer from `?id=` once clips+config are ready; ignore missing ids.
@@ -923,6 +948,7 @@ export default function App() {
     });
     if (checked && preset) {
       applyLoraHints(preset);
+      if (preset.cached || !preset.spec) return;
       try {
         await ensureLoraSpec(preset.spec, preset.label);
       } catch (e) {
@@ -986,6 +1012,8 @@ export default function App() {
   }
 
   async function deleteClip(clip: Clip) {
+    const name = clip.filename || clipDisplayPrompt(clip.prompt) || clip.id;
+    if (!confirm(`Delete this video from the library and disk?\n\n${name}`)) return;
     await fetch(`${API}/api/clips/${clip.id}`, { method: "DELETE" });
     setClips((prev) => {
       revokeClipBlob(clip);
@@ -1250,8 +1278,11 @@ export default function App() {
   function generateBody(opts: {
     compiledPrompt: string;
     fallbackPrompt: string;
+    composerPrompt: string;
     modeHint: string;
+    routing: RoutingMode;
     refs: ReferenceItem[];
+    allRefs: ReferenceItem[];
     quality: string;
     resolutionId: string;
     durationId: string;
@@ -1264,7 +1295,12 @@ export default function App() {
     ssdStreaming: boolean;
     loraPresetIds: string[];
     imagePath: string | null;
+    imageName: string | null;
     endImagePath: string | null;
+    endImageName: string | null;
+    selectedCastIds: string[];
+    turboEnabled: boolean;
+    turboTier: string;
   }): Record<string, unknown> {
     const res = config?.resolution_presets.find((p) => p.id === opts.resolutionId);
     const dur = config?.duration_presets.find((d) => d.id === opts.durationId);
@@ -1315,6 +1351,39 @@ export default function App() {
       }
       if (opts.modeHint === "fl2va" && opts.endImagePath) body.end_image_path = opts.endImagePath;
     }
+    body.recipe = {
+      composer_prompt: opts.composerPrompt,
+      routing: opts.routing,
+      mode: opts.modeHint,
+      refs: opts.allRefs.map((r) => ({
+        kind: r.kind,
+        path: r.path,
+        name: r.name,
+        audio_path: r.audioPath || undefined,
+        audio_name: r.audioName || undefined,
+        enabled: r.enabled !== false,
+        duration_s: r.durationS,
+        ref_size: r.refSize ?? "max",
+        source: r.source,
+        cast_id: r.castId,
+      })),
+      image_path: opts.imagePath,
+      image_name: opts.imageName,
+      end_image_path: opts.endImagePath,
+      end_image_name: opts.endImageName,
+      selected_cast_ids: opts.selectedCastIds,
+      token_reduction: opts.tokenReduction,
+      ssd_streaming: opts.ssdStreaming,
+      turbo_enabled: opts.turboEnabled,
+      turbo_tier: opts.turboTier,
+      lora_preset_ids: opts.loraPresetIds,
+      loras: loraPresets
+        .filter((p) => opts.loraPresetIds.includes(p.id))
+        .map((p) => ({ id: p.id, spec: p.spec, scale: p.scale })),
+      resolution_id: opts.resolutionId,
+      duration_id: opts.durationId,
+      quality: opts.quality,
+    };
     return body;
   }
 
@@ -1336,8 +1405,11 @@ export default function App() {
       generateBody({
         compiledPrompt: sceneCompiled.compiledPrompt,
         fallbackPrompt: scene.prompt,
+        composerPrompt: scene.prompt,
         modeHint: sceneCompiled.modeHint,
+        routing: scene.routing ?? (scene.mode === "ref2va" ? "ref2va" : scene.mode === "t2va" ? "auto" : "fl2va"),
         refs: sceneCompiled.refs,
+        allRefs: scene.refs,
         quality: scene.quality,
         resolutionId: scene.resolutionId,
         durationId: scene.durationId,
@@ -1350,7 +1422,12 @@ export default function App() {
         ssdStreaming: scene.ssdStreaming,
         loraPresetIds: scene.loraPresetIds,
         imagePath: scene.imagePath ?? null,
+        imageName: null,
         endImagePath: scene.endImagePath ?? null,
+        endImageName: null,
+        selectedCastIds: scene.selectedCastIds ?? [],
+        turboEnabled: Boolean(scene.turboEnabled),
+        turboTier: scene.turboTier ?? TURBO_CONFIG.DEFAULT_TIER,
       }),
     );
   }
@@ -1362,8 +1439,11 @@ export default function App() {
         generateBody({
           compiledPrompt: compiled.compiledPrompt,
           fallbackPrompt: prompt,
+          composerPrompt: prompt,
           modeHint: compiled.modeHint,
+          routing,
           refs: compiled.refs,
+          allRefs: refs,
           quality,
           resolutionId,
           durationId,
@@ -1376,7 +1456,12 @@ export default function App() {
           ssdStreaming,
           loraPresetIds,
           imagePath,
+          imageName,
           endImagePath,
+          endImageName,
+          selectedCastIds,
+          turboEnabled,
+          turboTier,
         }),
       );
     } catch (e) {
@@ -1812,8 +1897,10 @@ export default function App() {
           onToggle={(id, checked) => void toggleLoraPreset(id, checked)}
           onRemove={(preset) => void removeLoraPreset(preset)}
           onAddCustom={addCustomLora}
+          onPresetsChange={setLoraPresets}
           addingCustom={addingCustomLora}
           disabled={busy || loraBusy}
+          api={API}
         />
       )}
     </div>

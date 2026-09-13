@@ -1,11 +1,21 @@
 import type { LoraPreset } from "../../types";
 
+export interface LoraDownloadProgress {
+  percent: number;
+  downloaded_gb: number;
+  expected_gb: number;
+  speed: string;
+}
+
 interface LoraCardProps {
   preset: LoraPreset;
   selected: boolean;
   onToggle: (selected: boolean) => void;
   onScaleChange?: (scale: number) => void;
   onRemove?: () => void;
+  onDownload?: () => void;
+  downloading?: boolean;
+  progress?: LoraDownloadProgress | null;
   disabled?: boolean;
   compact?: boolean;
 }
@@ -16,21 +26,26 @@ export function LoraCard({
   onToggle,
   onScaleChange,
   onRemove,
+  onDownload,
+  downloading,
+  progress,
   disabled,
   compact,
 }: LoraCardProps) {
   const displayLabel = preset.label.replace(/\s*\(default\)\s*$/i, "").trim();
+  const compatible = preset.compatible !== false;
+  const needsDownload = compatible && !preset.cached && Boolean(preset.spec);
 
   return (
     <div
-      className={`lora-card${selected ? " lora-card--selected" : ""}${compact ? " lora-card--compact" : ""}`}
+      className={`lora-card${selected ? " lora-card--selected" : ""}${compact ? " lora-card--compact" : ""}${!compatible ? " lora-card--blocked" : ""}`}
       role="option"
       aria-selected={selected}
     >
       <button
         type="button"
         className="lora-card__toggle"
-        disabled={disabled}
+        disabled={disabled || !compatible}
         onClick={() => onToggle(!selected)}
         aria-label={`${selected ? "Deselect" : "Select"} ${displayLabel}`}
       >
@@ -50,16 +65,55 @@ export function LoraCard({
               {preset.guidance}
             </span>
           )}
-          {preset.steps && (
-            <span className="lora-card__meta">
-              {preset.steps} steps
-              {preset.layers ? `, ${preset.layers} layers` : ""}
-            </span>
+          <span className="lora-card__meta">
+            {preset.category ? preset.category : "LoRA"}
+            {preset.trigger ? ` · ${preset.trigger}` : ""}
+            {preset.steps ? ` · ${preset.steps} steps` : ""}
+          </span>
+          {downloading && progress && (
+            <div className="download-progress">
+              <div className="download-progress__bar-container">
+                <div className="download-progress__bar" style={{ width: `${Math.min(100, progress.percent)}%` }} />
+              </div>
+              <div className="download-progress__text">
+                <span>
+                  {progress.speed.startsWith("resum") ? (
+                    <span>Resuming {progress.downloaded_gb.toFixed(2)} GB…</span>
+                  ) : (
+                    <>
+                      {progress.percent}%
+                      {progress.expected_gb > 0
+                        ? ` · ${progress.downloaded_gb.toFixed(2)} / ${progress.expected_gb.toFixed(2)} GB`
+                        : ` · ${progress.downloaded_gb.toFixed(2)} GB`}
+                    </>
+                  )}
+                </span>
+                <span className="download-progress__speed">{progress.speed}</span>
+              </div>
+            </div>
           )}
         </div>
       </button>
 
       <div className="lora-card__actions">
+        {needsDownload && onDownload && (
+          <button
+            type="button"
+            className="btn-secondary btn-compact"
+            disabled={disabled || downloading}
+            onClick={onDownload}
+          >
+            {downloading ? "Downloading…" : "Download"}
+          </button>
+        )}
+        {preset.cached && compatible && (
+          <span className="lora-card__ready">Ready</span>
+        )}
+        {!compatible && preset.source_url && (
+          <a className="lora-card__hf" href={preset.source_url} target="_blank" rel="noreferrer">
+            Hugging Face
+          </a>
+        )}
         {selected && onScaleChange && (
           <label className="lora-card__scale">
             <span className="lora-card__scale-label">Scale</span>

@@ -1,0 +1,21 @@
+---
+description: Live H3 ecosystem map — fetch before weights, LoRAs, or Apple speed work
+alwaysApply: true
+---
+
+# Awesome MiniMax-H3
+
+Canonical community map: https://github.com/wildminder/awesome-minimax-H3
+
+Fetch the live README and `guides/minimax-h3-performance.md` before adding checkpoints, LoRAs, prompt recipes, or Apple Metal/MLX optimizations. Do not rely on a stale snapshot.
+
+**Engine is antirez h3.c** (`third_party/h3.c` local fork). Do not replace it with MLX (`minimax-h3-mlx`, `Argus-AiTeam/minimax-h3-mac`) or ComfyUI. Those are idea sources only.
+
+Use from the list when it maps onto h3.c:
+
+- Comfy-Org pruned INT8 ConvRot DiTs
+- Standard DiT A/B LoRAs fusable as `--lora PATH:SCALE` (up to 8, per-weight)
+- Official Base / Ref prompt guides
+- Turbo / Tutu-class speed adapters that do not need a custom sampler
+
+Do not adopt as runtime: CUDA Sage/Sol-Attn, GGUF, NVFP4, PDD Acc, VSA, dual-clock samplers, Semantic Bridge, H3-World, RAVEN, or NSFW collections unless the user asks.

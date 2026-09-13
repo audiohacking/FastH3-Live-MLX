@@ -193,11 +193,34 @@
   color: var(--color-muted);
 }
 
+.lora-modal__category {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.lora-card__ready {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-success, #15803d);
+}
+
+.lora-card__hf {
+  font-size: var(--font-size-xs);
+  color: var(--color-accent);
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
  * LoRA Card Styles
  * ───────────────────────────────────────────────────────────────────────────── */
 
 .lora-card {
+  position: relative;
   display: flex;
   align-items: stretch;
   background: var(--color-surface);
@@ -205,6 +228,10 @@
   border-radius: var(--radius-lg);
   overflow: hidden;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.lora-card--blocked {
+  opacity: 0.78;
 }
 
 .lora-card:hover {

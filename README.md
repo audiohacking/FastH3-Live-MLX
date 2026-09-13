@@ -4,6 +4,8 @@ Local **MiniMax-H3** video+audio generation on Apple Silicon. Native [h3.c](http
 
 Open **http://127.0.0.1:8765/** after starting the server.
 
+For a **standalone FastH3 Live stream** (no Web UI): see [`LIVE.md`](LIVE.md) and `python liveserver.py`.
+
 The UI starts in **Ref2VA** mode (add an image/video/audio reference to generate). See
 [`DEV.md`](DEV.md) for the current development state and [`ROADMAP.md`](ROADMAP.md) for the plan.
 

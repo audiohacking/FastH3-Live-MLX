@@ -5,6 +5,10 @@ export interface LoraPreset {
   scale: number;
   custom?: boolean;
   cached?: boolean;
+  compatible?: boolean;
+  category?: string;
+  trigger?: string;
+  source_url?: string;
   steps?: number;
   layers?: number;
   reuse?: number;
@@ -95,6 +99,54 @@ export interface Clip {
   clip_count?: number;
   autocontinue?: boolean;
   autoconcat?: boolean;
+  quality?: string;
+  loras?: { id?: string; spec?: string; scale?: number }[];
+  recipe?: ClipRecipe;
+}
+
+export interface ClipRecipeRef {
+  kind: RefKind;
+  path: string;
+  name?: string;
+  audio_path?: string;
+  audioPath?: string;
+  audio_name?: string;
+  audioName?: string;
+  enabled?: boolean;
+  duration_s?: number;
+  durationS?: number;
+  ref_size?: RefSize;
+  refSize?: RefSize;
+  source?: "upload" | "cast" | "library";
+  cast_id?: string;
+  castId?: string;
+  preview_url?: string;
+  available?: boolean;
+  audio_available?: boolean;
+}
+
+export interface ClipRecipe {
+  composer_prompt?: string;
+  routing?: RoutingMode;
+  mode?: string;
+  refs?: ClipRecipeRef[];
+  image_path?: string | null;
+  image_name?: string | null;
+  end_image_path?: string | null;
+  end_image_name?: string | null;
+  image_path_available?: boolean;
+  end_image_path_available?: boolean;
+  image_path_url?: string;
+  end_image_path_url?: string;
+  selected_cast_ids?: string[];
+  token_reduction?: boolean;
+  ssd_streaming?: boolean;
+  turbo_enabled?: boolean;
+  turbo_tier?: string;
+  lora_preset_ids?: string[];
+  loras?: { id?: string; spec?: string; scale?: number }[];
+  resolution_id?: string;
+  duration_id?: string;
   quality?: string;
 }
 

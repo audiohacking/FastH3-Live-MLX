@@ -81,6 +81,19 @@ walking state of the tree.
 
 ---
 
+## FastH3 Live (`feat/fasth3-live`)
+
+Standalone continuous stream — **do not** use `server.py` for this.
+
+- Docs: [`LIVE.md`](LIVE.md)
+- Entry: `python liveserver.py` → `http://127.0.0.1:9000/` (VLC)
+- Assets: `data/fasth3_live/` from HF bucket `audiohacking/fasth3-live-bucket`
+- Sync: `./scripts/sync_fasth3_live_bucket.sh` (`--with-weights` for Comfy ref DiT only)
+- Engine path: native FL2VA + FastH3 LoRA fuse (448×448 × 362 × 4 steps). Comfy
+  INT8 ConvRot / Spectrum / Sage are **not** used at runtime.
+
+---
+
 ## Known constraints / gotchas
 
 - **No system ffmpeg.** Homebrew `/opt/homebrew/bin/ffmpeg` & `ffprobe` crash on missing

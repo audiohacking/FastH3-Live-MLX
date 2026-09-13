@@ -60,8 +60,10 @@ from h3_media import (
 )
 from h3_paths import REPO_ROOT, configure_scratch_root, mk_scratch_dir
 from h3_lora import (
+    catalog_entry,
     ensure_lora,
     lora_catalog,
+    lora_progress_bytes,
     normalize_lora_spec,
     read_custom_loras,
     write_custom_loras,
@@ -117,6 +119,7 @@ class ClipRecord:
     autoconcat: Optional[bool] = None
     quality: Optional[str] = None
     loras: Optional[list[dict[str, Any]]] = None
+    recipe: Optional[dict[str, Any]] = None
     project_id: Optional[str] = None
 
 
@@ -511,6 +514,94 @@ class AppState:
             await q.put(event)
 
 
+def _allowed_media_roots(state: AppState) -> list[Path]:
+    return [
+        state.upload_dir.resolve(),
+        state.output_dir.resolve(),
+        _frames_dir(state.output_dir).resolve(),
+    ]
+
+
+def _media_url_for(state: AppState, raw: str | None) -> str | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    path = Path(text)
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    if not resolved.is_file():
+        return None
+    roots = _allowed_media_roots(state)
+    if not any(resolved == root or root in resolved.parents for root in roots):
+        return None
+    if resolved.parent == _frames_dir(state.output_dir).resolve():
+        return f"/api/frames/files/{resolved.name}"
+    if resolved.parent == state.output_dir.resolve() and resolved.suffix.lower() == ".mp4":
+        return state.clip_url(resolved.name)
+    if state.upload_dir.resolve() in (resolved.parent, *resolved.parents):
+        return f"/api/uploads/{resolved.name}"
+    return None
+
+
+def _recipe_from_body(body: dict[str, Any]) -> dict[str, Any]:
+    raw = body.get("recipe")
+    recipe = dict(raw) if isinstance(raw, dict) else {}
+    if not recipe.get("composer_prompt"):
+        recipe["composer_prompt"] = body.get("composer_prompt") or body.get("prompt")
+    if not recipe.get("mode"):
+        recipe["mode"] = body.get("mode")
+    if not recipe.get("routing"):
+        mode = str(recipe.get("mode") or body.get("mode") or "")
+        recipe["routing"] = (
+            "ref2va" if mode == "ref2va" else "fl2va" if mode in {"first_frame", "last_frame", "fl2va"} else "auto"
+        )
+    if not recipe.get("refs") and body.get("refs"):
+        recipe["refs"] = body.get("refs")
+    if not recipe.get("image_path") and body.get("image_path"):
+        recipe["image_path"] = body.get("image_path")
+    if not recipe.get("end_image_path") and body.get("end_image_path"):
+        recipe["end_image_path"] = body.get("end_image_path")
+    if recipe.get("quality") is None and body.get("quality"):
+        recipe["quality"] = body.get("quality")
+    if recipe.get("token_reduction") is None and "token_reduction" in body:
+        recipe["token_reduction"] = bool(body.get("token_reduction"))
+    if recipe.get("ssd_streaming") is None and "ssd_streaming" in body:
+        recipe["ssd_streaming"] = bool(body.get("ssd_streaming"))
+    if not recipe.get("loras") and (body.get("loras") or body.get("lora_specs")):
+        recipe["loras"] = body.get("loras") or body.get("lora_specs")
+    return recipe
+
+
+def _enrich_recipe(state: AppState, recipe: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not recipe:
+        return recipe
+    out = dict(recipe)
+    refs: list[dict[str, Any]] = []
+    for item in out.get("refs") or []:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        path = str(row.get("path") or "")
+        url = _media_url_for(state, path)
+        row["available"] = bool(url or (path and Path(path).is_file()))
+        if url:
+            row["preview_url"] = url
+        audio = str(row.get("audio_path") or row.get("audioPath") or "")
+        if audio:
+            audio_url = _media_url_for(state, audio)
+            row["audio_available"] = bool(audio_url or Path(audio).is_file())
+        refs.append(row)
+    out["refs"] = refs
+    for key in ("image_path", "end_image_path"):
+        url = _media_url_for(state, out.get(key))
+        out[f"{key}_available"] = bool(url or (out.get(key) and Path(str(out[key])).is_file()))
+        if url:
+            out[f"{key}_url"] = url
+    return out
+
+
 def _clip_for_api(state: AppState, clip: ClipRecord) -> dict[str, Any]:
     data = asdict(clip)
     filename = str(data.get("filename") or "").strip()
@@ -522,6 +613,8 @@ def _clip_for_api(state: AppState, clip: ClipRecord) -> dict[str, Any]:
                 data["video_url"] = state.clip_url(filename)
         else:
             data["video_url"] = ""
+    if data.get("recipe"):
+        data["recipe"] = _enrich_recipe(state, data["recipe"])
     return data
 
 
@@ -1024,10 +1117,11 @@ async def _execute_run(state: AppState, run_id: str) -> None:
                 created_at=datetime.now().isoformat(),
                 bytes=merged_path.stat().st_size if merged_path.is_file() else None,
                 project_id=source_project or state.active_project_id,
+                recipe=_recipe_from_body(body),
                 **{
                     k: v
                     for k, v in _clip_settings_from_body(body).items()
-                    if k in ClipRecord.__dataclass_fields__ and k != "project_id"
+                    if k in ClipRecord.__dataclass_fields__ and k not in {"project_id", "recipe"}
                 },
             )
             state.clips[mid] = mclip
@@ -1466,8 +1560,137 @@ def create_app(
             raise HTTPException(500, result.get("error", "download failed"))
         return result
 
+    _lora_download_state: dict[str, Any] = {
+        "active": False,
+        "lora_id": None,
+        "spec": None,
+        "error": None,
+        "task": None,
+        "expected": 0,
+    }
+
+
+    async def _run_lora_download(spec: str) -> None:
+        try:
+            await asyncio.to_thread(ensure_lora, spec)
+            _lora_download_state["error"] = None
+        except Exception as exc:
+            _lora_download_state["error"] = str(exc)
+        finally:
+            _lora_download_state["active"] = False
+            _lora_download_state["task"] = None
+
+    @app.get("/api/loras")
+    async def api_loras_list():
+        return {"lora_presets": lora_catalog(state.output_dir)}
+
+    @app.get("/api/loras/download/status")
+    async def api_loras_download_status():
+        st = _lora_download_state
+        task = st.get("task")
+        active = bool(st.get("active")) and task is not None and not task.done()
+        spec = str(st.get("spec") or "")
+        current = await asyncio.to_thread(lora_progress_bytes, spec) if spec else 0
+        expected = int(st.get("expected") or 0)
+        if current > expected:
+            st["expected"] = current
+            expected = current
+        pct = min(99, int(100 * current / expected)) if active and expected > 0 else (100 if not active and current else 0)
+        return {
+            "active": active,
+            "lora_id": st.get("lora_id"),
+            "error": st.get("error"),
+            "progress": {
+                "percent": pct,
+                "downloaded_bytes": current,
+                "expected_bytes": expected,
+            },
+        }
+
+    @app.get("/api/loras/download/stream")
+    async def api_loras_download_stream(lora_id: str):
+        from sse_starlette.sse import EventSourceResponse
+
+        lid = (lora_id or "").strip()
+        entry = catalog_entry(lid, state.output_dir)
+        if entry is None:
+            raise HTTPException(404, "unknown LoRA")
+        if not entry.get("compatible", True) or not entry.get("spec"):
+            raise HTTPException(400, entry.get("guidance") or "this LoRA cannot be fused in h3.c")
+        spec = normalize_lora_spec(str(entry["spec"]))
+
+        st = _lora_download_state
+        task = st.get("task")
+        running = task is not None and not task.done()
+        if running and st.get("lora_id") != lid:
+            raise HTTPException(409, f"another LoRA ({st['lora_id']}) is downloading")
+        if not running:
+            st["active"] = True
+            st["lora_id"] = lid
+            st["spec"] = spec
+            st["error"] = None
+            already = lora_progress_bytes(spec)
+            st["expected"] = max(already, int(entry.get("size_bytes") or 0), 1)
+            st["task"] = asyncio.create_task(_run_lora_download(spec))
+
+        last_total = 0
+        last_time = time.time()
+
+        async def event_generator():
+            nonlocal last_total, last_time
+            try:
+                while True:
+                    cur_task = st.get("task")
+                    if cur_task is None or cur_task.done():
+                        break
+                    current = await asyncio.to_thread(lora_progress_bytes, spec)
+                    if current > int(st.get("expected") or 0):
+                        st["expected"] = current
+                    expected = int(st.get("expected") or 0)
+                    now = time.time()
+                    speed = 0.0
+                    if now - last_time >= 0.5:
+                        speed = (current - last_total) / (now - last_time)
+                        last_total = current
+                        last_time = now
+                    pct = min(99, int(100 * current / expected)) if expected > 0 else 0
+                    if speed > 1024**2:
+                        speed_str = f"{speed / 1024**2:.1f} MB/s"
+                    elif speed > 1024:
+                        speed_str = f"{speed / 1024:.0f} KB/s"
+                    else:
+                        speed_str = f"{speed:.0f} B/s" if speed > 0 else "starting…"
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps({
+                            "percent": pct,
+                            "downloaded_gb": round(current / 1024**3, 3),
+                            "expected_gb": round(expected / 1024**3, 3) if expected else 0,
+                            "speed": speed_str,
+                            "active": True,
+                            "lora_id": lid,
+                        }),
+                    }
+                    await asyncio.sleep(0.8)
+            except asyncio.CancelledError:
+                raise
+            if st["error"]:
+                yield {"event": "error", "data": json.dumps({"error": st["error"], "lora_id": lid})}
+            else:
+                yield {
+                    "event": "complete",
+                    "data": json.dumps({
+                        "ok": True,
+                        "lora_id": lid,
+                        "lora_presets": lora_catalog(state.output_dir),
+                    }),
+                }
+
+        return EventSourceResponse(event_generator())
+
     @app.post("/api/loras/ensure")
     async def api_lora_ensure(body: dict[str, Any]):
+
         spec = normalize_lora_spec(str(body.get("spec") or body.get("url") or ""))
         if not spec:
             raise HTTPException(400, "spec or url is required")
@@ -1784,6 +2007,7 @@ def create_app(
             require_ui_canvas(int(settings["width"]), int(settings["height"]))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        recipe = _recipe_from_body(body)
 
         autocontinue = bool(body.get("autocontinue")) or clip_count > 1 or bool(continue_from)
         autoconcat = bool(body.get("autoconcat")) or clip_count > 1
@@ -1818,10 +2042,11 @@ def create_app(
                 status=RunStatus.QUEUED.value,
                 created_at=datetime.now().isoformat(),
                 project_id=project_id,
+                recipe=recipe,
                 **{
                     k: v
                     for k, v in settings.items()
-                    if k in ClipRecord.__dataclass_fields__ and k != "project_id"
+                    if k in ClipRecord.__dataclass_fields__ and k not in {"project_id", "recipe"}
                 },
             )
             state.clips[clip_id] = clip
@@ -1996,6 +2221,16 @@ def create_app(
         if not path.is_file():
             raise HTTPException(404, "Video not found")
         return FileResponse(path, media_type="video/mp4")
+
+    @app.get("/api/uploads/{filename}")
+    async def upload_file(filename: str):
+        path = (state.upload_dir / Path(filename).name).resolve()
+        root = state.upload_dir.resolve()
+        if root not in path.parents and path != root:
+            raise HTTPException(404, "Upload not found")
+        if not path.is_file():
+            raise HTTPException(404, "Upload not found")
+        return FileResponse(path)
 
     if mount_static:
         dist = resolve_web_dist()

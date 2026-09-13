@@ -214,9 +214,17 @@ def apple_chip_brand() -> str:
 
 
 def metal4_gpu(brand: str | None = None) -> bool:
-    """h3.c ``--use-int8-row-fc2`` requires an M5-class Metal 4 GPU."""
+    """True when h3.c TensorOps / ``--use-int8-row-fc2`` class is expected.
+
+    Historically M5-only. M3 Ultra / M4 report Metal 4; the local h3 fork now
+    enables TensorOps on those chips too, so treat them as eligible.
+    """
     text = brand if brand is not None else apple_chip_brand()
-    return bool(re.search(r"\bM(?:5|6|7)\b", text))
+    if re.search(r"\bM(?:4|5|6|7)\b", text):
+        return True
+    if re.search(r"M3\s*Ultra", text, re.I):
+        return True
+    return False
 
 
 def resolve_int8_row_fc2(req: "GenerateRequest", *, metal4: bool) -> bool:
@@ -496,6 +504,8 @@ class GenerateRequest:
     loras: list[LoraRef] = field(default_factory=list)
     mode: str = "t2va"
     profile: bool = True
+    # Skip interactive PTY — linenoise deadlocks on long FastH3 Live prompts.
+    oneshot: bool = False
 
 
 def uses_ref2va(req: GenerateRequest) -> bool:
@@ -737,7 +747,7 @@ class H3Engine:
         req.output_path.parent.mkdir(parents=True, exist_ok=True)
         req.int8_row_fc2 = resolve_int8_row_fc2(req, metal4=self.metal4)
 
-        if need_ref:
+        if need_ref or req.oneshot:
             self._stop_session()
             return self._generate_oneshot(req, on_progress=on_progress)
 
