@@ -139,10 +139,11 @@
           <label><input type="radio" name="promptMode" value="random" checked /> Random pool</label>
           <label><input type="radio" name="promptMode" value="custom" /> Custom</label>
         </div>
-        <textarea id="promptText" disabled placeholder="Paste a full H3 prompt (Context-IR). Use {NAME} / {NAME2} for cast slots."></textarea>
+        <textarea id="promptText" disabled spellcheck="false"
+          placeholder="Select Custom, paste a full H3 prompt, then Apply. {NAME} / {NAME2} fill from the cast pool."></textarea>
         <div class="prompt-actions">
-          <button id="btnApplyPrompt" type="button">Apply to next clip</button>
-          <span class="prompt-note" id="promptNote">—</span>
+          <button id="btnApplyPrompt" type="button">Apply</button>
+          <span class="prompt-note" id="promptNote">Draft is local until you Apply — then it runs on the next clip.</span>
         </div>
       </div>
     </section>
@@ -176,6 +177,10 @@
     let attachTimer = null;
     let heartbeatTimer = null;
     let lastStatus = null;
+    // Prompt editor is owned by the browser — status polls must never clobber it.
+    let promptHydrated = false;
+    let appliedMode = "random";
+    let appliedText = "";
     const sessionId = (crypto.randomUUID && crypto.randomUUID()) ||
       ("s" + Math.random().toString(16).slice(2) + Date.now().toString(16));
 
@@ -208,20 +213,56 @@
       return el ? el.value : "random";
     }
 
-    function syncPromptModeUi(mode) {
+    function setDraftMode(mode) {
       promptModeInputs().forEach((i) => { i.checked = i.value === mode; });
       promptText.disabled = mode !== "custom";
+      updatePromptNote();
+    }
+
+    function draftIsDirty() {
+      const mode = selectedPromptMode();
+      if (mode !== appliedMode) return true;
+      if (mode === "custom" && promptText.value !== appliedText) return true;
+      return false;
+    }
+
+    function updatePromptNote() {
+      const mode = selectedPromptMode();
+      if (!promptHydrated) {
+        promptNote.textContent = "Draft is local until you Apply — then it runs on the next clip.";
+        return;
+      }
+      if (draftIsDirty()) {
+        promptNote.textContent = mode === "custom"
+          ? "Unsaved draft — click Apply to queue this for the next clip."
+          : "Unsaved — click Apply to switch next clips back to the random pool.";
+        return;
+      }
+      if (appliedMode === "custom") {
+        promptNote.textContent = "Applied: custom (next clip). Edit anytime; Apply again to update.";
+      } else {
+        const n = lastStatus && lastStatus.pool_scenes ? lastStatus.pool_scenes : "…";
+        promptNote.textContent = `Applied: random pool (${n} scenes).`;
+      }
     }
 
     promptModeInputs().forEach((input) => {
       input.addEventListener("change", () => {
         promptText.disabled = selectedPromptMode() !== "custom";
+        if (selectedPromptMode() === "custom") promptText.focus();
+        updatePromptNote();
       });
     });
+    promptText.addEventListener("input", updatePromptNote);
 
     btnApplyPrompt.addEventListener("click", async () => {
       const mode = selectedPromptMode();
       const text = promptText.value;
+      if (mode === "custom" && !text.trim()) {
+        promptNote.textContent = "Custom prompt is empty — paste a prompt first.";
+        promptText.focus();
+        return;
+      }
       btnApplyPrompt.disabled = true;
       try {
         const r = await fetch("/api/control", {
@@ -231,15 +272,15 @@
         });
         const j = await r.json();
         if (!j.ok) {
-          promptNote.textContent = j.error || "failed";
+          promptNote.textContent = j.error || "Apply failed";
           return;
         }
-        promptNote.textContent = mode === "custom"
-          ? "custom queued for next clip"
-          : "random pool for next clip";
+        appliedMode = mode;
+        appliedText = mode === "custom" ? text : "";
+        updatePromptNote();
         refreshStatus();
       } catch (_) {
-        promptNote.textContent = "apply failed";
+        promptNote.textContent = "Apply failed — check the server.";
       } finally {
         btnApplyPrompt.disabled = false;
       }
@@ -376,16 +417,20 @@
           metric("Chip", s.chip || "—"),
           metric("Next prompt", s.next_prompt_note || s.prompt_mode || "—"),
         ].join("");
-        if (typeof s.custom_prompt === "string" && document.activeElement !== promptText) {
-          if (s.prompt_mode === "custom" && s.custom_prompt && promptText.value !== s.custom_prompt) {
-            promptText.value = s.custom_prompt;
-          }
+        // Hydrate the editor once from the server; never fight the user after that.
+        if (!promptHydrated) {
+          appliedMode = s.prompt_mode === "custom" ? "custom" : "random";
+          appliedText = typeof s.custom_prompt === "string" ? s.custom_prompt : "";
+          setDraftMode(appliedMode);
+          if (appliedMode === "custom") promptText.value = appliedText;
+          promptHydrated = true;
+          updatePromptNote();
+        } else if (!draftIsDirty()) {
+          updatePromptNote();
         }
-        if (s.prompt_mode) syncPromptModeUi(s.prompt_mode);
-        if (s.next_prompt_note) promptNote.textContent = s.next_prompt_note;
-        if (s.pool_scenes && selectedPromptMode() === "random") {
+        if (s.pool_scenes) {
           promptText.placeholder =
-            `Random pool: ${s.pool_scenes} scenes × cast. Switch to Custom to paste a prompt ({NAME} slots OK).`;
+            `Paste a full H3 prompt, then Apply. {NAME}/{NAME2} OK. Pool has ${s.pool_scenes} scenes when Random is applied.`;
         }
         if (watching && !player) {
           if (s.generating) {
