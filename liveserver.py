@@ -78,7 +78,6 @@ from h3_live.episode import (  # noqa: E402
     EPISODE_RENDER_HEIGHT,
     EPISODE_RENDER_WIDTH,
     EPISODE_REUSE,
-    EPISODE_STEPS,
     EPISODE_TOKEN_REDUCTION,
     EPISODE_WIDTH,
     EpisodeJob,
@@ -96,10 +95,23 @@ from h3_live.presets import (  # noqa: E402
 )
 from h3_live.retime import feed_mpegts_to_sink, retime_to_mpegts  # noqa: E402
 from h3_live.scenes import PromptPool  # noqa: E402
+from h3_live.timing import PhaseTimer  # noqa: E402
 from h3_lora import catalog_entry, ensure_lora  # noqa: E402
 from h3_paths import default_model_dir, mk_scratch_dir  # noqa: E402
 
 log = logging.getLogger("h3-live")
+
+
+def _recipe_edit_blocked(broadcast: "Broadcast") -> str | None:
+    """Recipe knobs are stop-only — no mid-stream Apply."""
+    with broadcast.state.lock:
+        generating = broadcast.state.generating
+        episode = broadcast.state.episode.is_active()
+    if episode:
+        return "stop/cancel the episode before changing recipe"
+    if generating or broadcast.demand_count() > 0:
+        return "stop the stream before changing recipe"
+    return None
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -138,6 +150,8 @@ class LiveState:
         self.height = 0
         self.frames = 0
         self.steps = 0
+        self.layers = LIVE_LAYERS
+        self.reuse = LIVE_REUSE
         self.play_fps = 0.0
         self.cancel_fn = None  # set to engine.request_cancel
         # Prompt control applies to the *next* clip (in-flight job keeps its prompt).
@@ -156,6 +170,31 @@ class LiveState:
         # Offline episode batch (pauses Live producer while running).
         self.episode = EpisodeJob()
         self.episode_hold = False
+        # Active LoRA (None when student-only). Scale Apply rebuilds the list.
+        self.lora_id: str | None = None
+        self.lora_label: str | None = None
+        self.lora_scale: float | None = None
+        self.loras: list = []
+        # Live generate progress (from h3.c stage lines + ProgressEta).
+        self.progress: dict | None = None
+        self.last_phases: str | None = None
+        self.gen_started_at: float | None = None
+
+    def set_progress(self, mp: dict | None) -> None:
+        with self.lock:
+            if mp is None:
+                self.progress = None
+                return
+            self.progress = {
+                "stage": mp.get("stage"),
+                "label": mp.get("label"),
+                "step": mp.get("step"),
+                "total": mp.get("total"),
+                "pct": mp.get("pct"),
+                "eta_s": mp.get("eta_s"),
+                "avg_step_s": mp.get("avg_step_s"),
+                "elapsed_s": mp.get("elapsed_s"),
+            }
 
     def _prune_watch_sessions_locked(self) -> list[str]:
         now = time.monotonic()
@@ -218,6 +257,8 @@ class LiveState:
                 "height": self.height,
                 "frames": self.frames,
                 "steps": self.steps,
+                "layers": self.layers,
+                "reuse": self.reuse,
                 "play_fps": self.play_fps,
                 "prompt_mode": self.prompt_mode,
                 "custom_prompt": custom,
@@ -234,6 +275,22 @@ class LiveState:
                 "presets": presets_public(),
                 "episode": self.episode.as_dict(),
                 "episode_hold": self.episode_hold,
+                "lora": (
+                    {
+                        "id": self.lora_id,
+                        "label": self.lora_label or self.lora_id,
+                        "scale": self.lora_scale,
+                    }
+                    if self.lora_id
+                    else None
+                ),
+                "progress": dict(self.progress) if self.progress else None,
+                "last_phases": self.last_phases,
+                "gen_elapsed_s": (
+                    round(time.time() - self.gen_started_at, 1)
+                    if self.generating and self.gen_started_at
+                    else None
+                ),
             }
 
     def demand_count(self, ts_viewers: int) -> int:
@@ -498,14 +555,43 @@ class Broadcast:
                             broadcast.state.pool_scenes,
                             when,
                         )
-                elif action == "set_quality":
-                    preset_name = str(body.get("preset") or "").strip().lower()
-                    when = (
-                        "applies to next clip"
-                        if broadcast.state.generating
-                        else "ready for next clip"
-                    )
+                elif action in ("set_quality", "set_lora_scale", "set_recipe"):
+                    blocked = _recipe_edit_blocked(broadcast)
+                    if blocked:
+                        self._json(409, {"ok": False, "error": blocked})
+                        return
                     try:
+                        # --- LoRA scale (optional) ---
+                        if "scale" in body and body["scale"] is not None:
+                            if not broadcast.state.lora_id:
+                                if action == "set_lora_scale":
+                                    self._json(
+                                        400, {"ok": False, "error": "no LoRA loaded"}
+                                    )
+                                    return
+                            else:
+                                scale = float(body["scale"])
+                                if not (0.05 <= scale <= 2.0):
+                                    self._json(
+                                        400,
+                                        {
+                                            "ok": False,
+                                            "error": "scale must be in [0.05, 2.0]",
+                                        },
+                                    )
+                                    return
+                                ref = resolve_lora(broadcast.state.lora_id, scale)
+                                with broadcast.state.lock:
+                                    broadcast.state.lora_scale = float(ref.scale)
+                                    broadcast.state.loras = [ref]
+                                log.info(
+                                    "LoRA %s scale → %.2f (stream stopped)",
+                                    broadcast.state.lora_id,
+                                    ref.scale,
+                                )
+
+                        # --- Named preset fills canvas fields unless overridden ---
+                        preset_name = str(body.get("preset") or "").strip().lower()
                         if preset_name:
                             preset = get_preset(preset_name)
                             with broadcast.state.lock:
@@ -514,60 +600,72 @@ class Broadcast:
                                 broadcast.state.render_height = preset.render_height
                                 broadcast.state.token_reduction = preset.token_reduction
                                 broadcast.state.frames = preset.frames
-                                if "ensemble_only" in body and body["ensemble_only"] is not None:
-                                    broadcast.state.ensemble_only = bool(body["ensemble_only"])
-                                if "curated_share" in body and body["curated_share"] is not None:
-                                    broadcast.state.curated_share = float(body["curated_share"])
-                                broadcast.state.recipe_note = recipe_label(
-                                    preset=preset.name,
-                                    width=broadcast.state.width,
-                                    height=broadcast.state.height,
-                                    render_width=preset.render_width,
-                                    render_height=preset.render_height,
-                                    frames=preset.frames,
-                                    token_reduction=preset.token_reduction,
-                                    steps=broadcast.state.steps,
+
+                        with broadcast.state.lock:
+                            if "render_width" in body and body["render_width"] is not None:
+                                broadcast.state.render_width = int(body["render_width"])
+                            if "render_height" in body and body["render_height"] is not None:
+                                broadcast.state.render_height = int(body["render_height"])
+                            if "token_reduction" in body and body["token_reduction"] is not None:
+                                broadcast.state.token_reduction = bool(
+                                    body["token_reduction"]
                                 )
-                            log.info(
-                                "quality preset → %s (%s)\n%s",
-                                preset.name,
-                                when,
-                                broadcast.state.recipe_note,
-                            )
-                        else:
-                            # Partial overrides without named preset.
-                            with broadcast.state.lock:
-                                if "render_width" in body and body["render_width"] is not None:
-                                    broadcast.state.render_width = int(body["render_width"])
-                                if "render_height" in body and body["render_height"] is not None:
-                                    broadcast.state.render_height = int(body["render_height"])
-                                if "token_reduction" in body and body["token_reduction"] is not None:
-                                    broadcast.state.token_reduction = bool(
-                                        body["token_reduction"]
-                                    )
-                                if "frames" in body and body["frames"] is not None:
-                                    broadcast.state.frames = int(body["frames"])
-                                if "ensemble_only" in body and body["ensemble_only"] is not None:
-                                    broadcast.state.ensemble_only = bool(body["ensemble_only"])
-                                if "curated_share" in body and body["curated_share"] is not None:
-                                    broadcast.state.curated_share = float(body["curated_share"])
+                            if "frames" in body and body["frames"] is not None:
+                                frames = int(body["frames"])
+                                if frames < 5:
+                                    raise ValueError("frames must be >= 5")
+                                broadcast.state.frames = frames
+                            if "steps" in body and body["steps"] is not None:
+                                steps = int(body["steps"])
+                                if not (1 <= steps <= 50):
+                                    raise ValueError("steps must be in [1, 50]")
+                                broadcast.state.steps = steps
+                            if "layers" in body and body["layers"] is not None:
+                                layers = int(body["layers"])
+                                if not (35 <= layers <= 50):
+                                    raise ValueError("layers must be in [35, 50]")
+                                broadcast.state.layers = layers
+                            if "reuse" in body and body["reuse"] is not None:
+                                reuse = int(body["reuse"])
+                                if not (1 <= reuse <= 3):
+                                    raise ValueError("reuse must be in [1, 3]")
+                                broadcast.state.reuse = reuse
+                            if "ensemble_only" in body and body["ensemble_only"] is not None:
+                                broadcast.state.ensemble_only = bool(body["ensemble_only"])
+                            if "curated_share" in body and body["curated_share"] is not None:
+                                broadcast.state.curated_share = float(body["curated_share"])
+                            # Explicit overrides without a named preset → custom
+                            if not preset_name and any(
+                                k in body and body[k] is not None
+                                for k in (
+                                    "render_width",
+                                    "render_height",
+                                    "frames",
+                                    "token_reduction",
+                                    "steps",
+                                    "layers",
+                                    "reuse",
+                                )
+                            ):
                                 broadcast.state.quality_preset = "custom"
-                                broadcast.state.recipe_note = recipe_label(
-                                    preset="custom",
-                                    width=broadcast.state.width,
-                                    height=broadcast.state.height,
-                                    render_width=broadcast.state.render_width,
-                                    render_height=broadcast.state.render_height,
-                                    frames=broadcast.state.frames,
-                                    token_reduction=broadcast.state.token_reduction,
-                                    steps=broadcast.state.steps,
-                                )
-                            log.info(
-                                "quality overrides (%s)\n%s",
-                                when,
-                                broadcast.state.recipe_note,
+                            broadcast.state.recipe_note = recipe_label(
+                                preset=broadcast.state.quality_preset,
+                                width=broadcast.state.width,
+                                height=broadcast.state.height,
+                                render_width=broadcast.state.render_width,
+                                render_height=broadcast.state.render_height,
+                                frames=broadcast.state.frames,
+                                token_reduction=broadcast.state.token_reduction,
+                                steps=broadcast.state.steps,
+                                layers=broadcast.state.layers,
+                                reuse=broadcast.state.reuse,
                             )
+                            note = broadcast.state.recipe_note
+                        log.info("recipe applied (stream stopped)\n%s", note)
                     except (KeyError, TypeError, ValueError) as exc:
+                        self._json(400, {"ok": False, "error": str(exc)})
+                        return
+                    except SystemExit as exc:
                         self._json(400, {"ok": False, "error": str(exc)})
                         return
                 else:
@@ -852,11 +950,22 @@ def resolve_lora(lora_id: str, scale: float | None) -> LoraRef:
     return LoraRef(spec=spec, path=Path(info["path"]), scale=sc)
 
 
-def resolve_live_model_dir(explicit: Path | None) -> Path:
-    """Prefer fused-turbo native tree, then FastH3 INT8/BF16, else stock MiniMax-H3."""
+def resolve_live_model_dir(
+    explicit: Path | None,
+    *,
+    prefer_stock: bool = False,
+) -> Path:
+    """Prefer fused-turbo / FastH3 student, else stock MiniMax-H3.
+
+    ``prefer_stock`` forces the official FL2VA tree (needed for base+LoRA
+    recipes like TaoMate 3-step — do not stack on the FastH3 student DiT).
+    """
     if explicit is not None:
         return Path(explicit).expanduser().resolve()
-    root = default_model_dir().resolve().parent  # …/models
+    stock = default_model_dir().resolve()
+    if prefer_stock:
+        return stock
+    root = stock.parent  # …/models
 
     def usable(candidate: Path) -> bool:
         tr = candidate / "FL2VA" / "transformer"
@@ -871,7 +980,7 @@ def resolve_live_model_dir(explicit: Path | None) -> Path:
         candidate = root / name
         if usable(candidate):
             return candidate.resolve()
-    return default_model_dir().resolve()
+    return stock
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -882,7 +991,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--model-dir",
         type=Path,
         default=None,
-        help="h3 -d root (default: FusedTurbo / FastH3 student if present)",
+        help="h3 -d root (default: FusedTurbo / FastH3 student if present; "
+        "stock MiniMax-H3 when --lora taomate_h3_3step)",
     )
     p.add_argument("--width", type=int, default=LIVE_WIDTH)
     p.add_argument("--height", type=int, default=LIVE_HEIGHT)
@@ -905,7 +1015,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="internal DiT/VAE height (0 = same as --height; overrides preset)",
     )
     p.add_argument("--frames", type=int, default=None, help="overrides quality preset")
-    p.add_argument("--steps", type=int, default=LIVE_STEPS)
+    p.add_argument(
+        "--steps",
+        type=int,
+        default=None,
+        help=f"denoising steps (default: {LIVE_STEPS}, or LoRA catalog steps)",
+    )
     p.add_argument("--layers", type=int, default=LIVE_LAYERS)
     p.add_argument("--reuse", type=int, default=LIVE_REUSE)
     p.add_argument(
@@ -937,9 +1052,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--lora",
         default=None,
-        help="builtin LoRA id (default: none when FastH3 student tree is used)",
+        help="builtin LoRA id (e.g. taomate_h3_3step). Default: none with FastH3 student. "
+        "TaoMate forces stock MiniMax-H3 FL2VA + 3 steps.",
     )
     p.add_argument("--lora-scale", type=float, default=None)
+    p.add_argument(
+        "--profile",
+        action="store_true",
+        help="pass h3 --profile (Metal phase lines on stderr; Live also logs "
+        "progress-stage wall buckets by default)",
+    )
     p.add_argument(
         "--fallback-lora",
         action="store_true",
@@ -982,6 +1104,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # Capture explicit overrides (None = use preset).
     ov_rw, ov_rh = args.render_width, args.render_height
     ov_frames, ov_tr = args.frames, args.token_reduction
+    ov_steps = args.steps
     apply_preset_to_args(args, get_preset(args.quality_preset))
     if ov_rw is not None:
         args.render_width = ov_rw
@@ -991,6 +1114,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.frames = ov_frames
     if ov_tr is not None:
         args.token_reduction = ov_tr
+    # Steps: explicit --steps wins; else LoRA catalog recipe; else Live default.
+    if ov_steps is not None:
+        args.steps = ov_steps
+    elif args.lora:
+        entry = catalog_entry(args.lora)
+        cat_steps = entry.get("steps") if entry else None
+        args.steps = int(cat_steps) if cat_steps is not None else LIVE_STEPS
+    else:
+        args.steps = LIVE_STEPS
     return args
 
 
@@ -1025,7 +1157,15 @@ def main(argv: list[str] | None = None) -> int:
         ", ensemble-only" if args.ensemble_only else "",
     )
 
-    model_dir = resolve_live_model_dir(args.model_dir)
+    lora_entry = catalog_entry(args.lora) if args.lora else None
+    prefer_stock = bool(
+        args.lora
+        and (
+            str(args.lora).startswith("taomate")
+            or (lora_entry and "taomate" in str(lora_entry.get("id") or "").lower())
+        )
+    )
+    model_dir = resolve_live_model_dir(args.model_dir, prefer_stock=prefer_stock)
     student_names = (
         LIVE_MODEL_DIR_NAME,
         LIVE_MODEL_DIR_INT8_NAME,
@@ -1038,10 +1178,31 @@ def main(argv: list[str] | None = None) -> int:
         for name in (LIVE_MODEL_DIR_FUSED_TURBO_NAME, LIVE_MODEL_DIR_FUSED_TURBO_INT8_NAME)
     )
     loras: list[LoraRef] = []
+    lora_id: str | None = None
+    lora_label: str | None = None
     if args.lora:
-        loras = [resolve_lora(args.lora, args.lora_scale)]
-        log.info("LoRA %s @ %.2f → %s", args.lora, loras[0].scale, loras[0].path)
+        if prefer_stock and using_student:
+            log.error(
+                "TaoMate/base LoRA cannot run on FastH3 student tree %s — "
+                "pass --model-dir models/MiniMax-H3 or omit student trees",
+                model_dir,
+            )
+            return 1
+        lora_id = str(args.lora)
+        entry = catalog_entry(lora_id) or {}
+        lora_label = str(entry.get("label") or lora_id)
+        loras = [resolve_lora(lora_id, args.lora_scale)]
+        log.info(
+            "LoRA %s @ %.2f → %s (steps=%d)",
+            lora_id,
+            loras[0].scale,
+            loras[0].path,
+            args.steps,
+        )
     elif not using_student and args.fallback_lora:
+        lora_id = LIVE_LORA_ID
+        entry = catalog_entry(lora_id) or {}
+        lora_label = str(entry.get("label") or lora_id)
         loras = [resolve_lora(LIVE_LORA_ID, args.lora_scale)]
         log.warning(
             "no FastH3 student tree at models/%s — fusing LoRA %s (slower/wrong recipe)",
@@ -1083,6 +1244,8 @@ def main(argv: list[str] | None = None) -> int:
     state.height = args.height
     state.frames = args.frames
     state.steps = args.steps
+    state.layers = args.layers
+    state.reuse = args.reuse
     state.play_fps = float(args.fps) if args.fps > 0 else 0.0
     state.cancel_fn = engine.request_cancel
     state.pool_scenes = sum(counts.values())
@@ -1102,7 +1265,14 @@ def main(argv: list[str] | None = None) -> int:
         frames=state.frames,
         token_reduction=state.token_reduction,
         steps=state.steps,
+        layers=state.layers,
+        reuse=state.reuse,
     )
+    if lora_id and loras:
+        state.lora_id = lora_id
+        state.lora_label = lora_label
+        state.lora_scale = float(loras[0].scale)
+        state.loras = list(loras)
 
     broadcast = Broadcast(args.host, args.port, state)
     mux = PaceMux(broadcast, use_re=args.pace)
@@ -1185,7 +1355,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 with state.lock:
                     state.generating = True
+                    state.gen_started_at = time.time()
+                    state.progress = None
                     job.last_cast = cast[:120]
+                    active_loras = list(state.loras)
                 t0 = time.time()
                 req = GenerateRequest(
                     prompt=prompt,
@@ -1196,29 +1369,46 @@ def main(argv: list[str] | None = None) -> int:
                     render_height=EPISODE_RENDER_HEIGHT,
                     num_frames=EPISODE_FRAMES,
                     quality="four_step",
-                    steps=EPISODE_STEPS,
+                    steps=args.steps,
                     layers=EPISODE_LAYERS,
                     reuse=EPISODE_REUSE,
                     token_reduction=EPISODE_TOKEN_REDUCTION,
                     seed=seed,
                     ssd_streaming=False,
                     int8_row_fc2=bool(args.int8_row_fc2),
-                    profile=False,
+                    profile=bool(args.profile),
                     oneshot=False,
-                    loras=loras,
+                    loras=active_loras,
                     mode="t2va",
                 )
+                phases = PhaseTimer()
+
+                def _ep_progress(mp: dict) -> None:
+                    phases.on_progress(mp)
+                    state.set_progress(mp)
+
                 try:
-                    engine.generate(req)
+                    engine.generate(req, on_progress=_ep_progress)
                 finally:
                     with state.lock:
                         state.generating = False
+                        state.progress = None
+                        state.gen_started_at = None
                 if stop.is_set() or job.cancel.is_set():
                     raise RuntimeError("cancelled")
                 if not mp4.is_file():
                     raise RuntimeError(f"missing output {mp4}")
                 gen_s = time.time() - t0
-                log.info("episode scene %d/%d done in %.1fs", i + 1, scenes, gen_s)
+                phase_line = phases.summary()
+                log.info(
+                    "episode scene %d/%d done in %.1fs  phases %s",
+                    i + 1,
+                    scenes,
+                    gen_s,
+                    phase_line,
+                )
+                with state.lock:
+                    state.last_phases = phase_line
                 clips.append(mp4)
                 with state.lock:
                     job.scenes_done = i + 1
@@ -1272,6 +1462,9 @@ def main(argv: list[str] | None = None) -> int:
                 render_w = state.render_width
                 render_h = state.render_height
                 frames = state.frames
+                steps = state.steps
+                layers = state.layers
+                reuse = state.reuse
                 token_reduction = state.token_reduction
                 recipe = state.recipe_note
                 pool.ensemble_only = state.ensemble_only
@@ -1304,6 +1497,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             with state.lock:
                 state.generating = True
+                state.gen_started_at = time.time()
+                state.progress = None
+                active_loras = list(state.loras)
             t0 = time.time()
             req = GenerateRequest(
                 prompt=prompt,
@@ -1314,32 +1510,45 @@ def main(argv: list[str] | None = None) -> int:
                 render_height=render_h or None,
                 num_frames=frames,
                 quality="four_step",
-                steps=args.steps,
-                layers=args.layers,
-                reuse=args.reuse,
+                steps=steps,
+                layers=layers,
+                reuse=reuse,
                 token_reduction=bool(token_reduction),
                 seed=seed,
                 ssd_streaming=False,
                 int8_row_fc2=bool(args.int8_row_fc2),
-                profile=False,
+                profile=bool(args.profile),
                 oneshot=False,  # warm FL2VA via !prompt-file (avoids linenoise deadlock)
-                loras=loras,
+                loras=active_loras,
                 mode="t2va",
             )
+            phases = PhaseTimer()
+
+            def _live_progress(mp: dict) -> None:
+                phases.on_progress(mp)
+                state.set_progress(mp)
+
             try:
-                engine.generate(req)
+                engine.generate(req, on_progress=_live_progress)
             except Exception as exc:
                 log.error("generate failed: %s", exc)
                 with state.lock:
                     state.generating = False
+                    state.progress = None
+                    state.gen_started_at = None
                 if stop.is_set():
                     break
                 time.sleep(2)
                 continue
 
             gen_s = time.time() - t0
+            phase_line = phases.summary()
+            log.info("phases %s", phase_line)
             with state.lock:
                 state.generating = False
+                state.progress = None
+                state.gen_started_at = None
+                state.last_phases = phase_line
 
             # Last viewer dropped mid-job — do not retime/queue a partial clip.
             if broadcast.demand_count() == 0:

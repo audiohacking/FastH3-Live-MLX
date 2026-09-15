@@ -100,13 +100,20 @@ def recipe_label(
     frames: int,
     token_reduction: bool,
     steps: int,
+    layers: int | None = None,
+    reuse: int | None = None,
 ) -> str:
     rw = render_width or width
     rh = render_height or height
     tr = "TR" if token_reduction else "noTR"
+    extra = ""
+    if layers is not None:
+        extra += f" layers={layers}"
+    if reuse is not None:
+        extra += f" reuse={reuse}"
     return (
         f"preset={preset} out={width}x{height} render={rw}x{rh} "
-        f"frames={frames} steps={steps} {tr}"
+        f"frames={frames} steps={steps}{extra} {tr}"
     )
 
 

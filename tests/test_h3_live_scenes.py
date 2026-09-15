@@ -67,8 +67,17 @@ class PromptPoolTests(unittest.TestCase):
         for scene in pool.scenes():
             low = scene.lower()
             self.assertTrue(
-                "static shot" in low
-                or "pushes in with small amplitude at slow speed" in low,
+                any(
+                    m in low
+                    for m in (
+                        "static shot",
+                        "pushes in with small amplitude at slow speed",
+                        "pulls out with small amplitude at slow speed",
+                        "trucks left with small amplitude at slow speed",
+                        "trucks right with small amplitude at slow speed",
+                        "arcs around the subject at slow speed",
+                    )
+                ),
                 scene[:120],
             )
             self.assertTrue(
@@ -82,7 +91,7 @@ class PromptPoolTests(unittest.TestCase):
             )
             self.assertIn("the office", low)
             self.assertIn("mockumentary", low)
-            self.assertNotRegex(low, r"\bturns?\b|\bturning\b|from behind|over shoulder")
+            self.assertNotRegex(low, r"from behind|over shoulder")
             self.assertLessEqual(PromptPool.slot_count(scene), 2)
 
     def test_wrap_idea_makes_context_ir(self) -> None:

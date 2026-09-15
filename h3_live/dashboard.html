@@ -166,6 +166,31 @@
       background: #0a0b08; color: var(--ink); border: 1px solid var(--line);
       border-radius: 4px; padding: 0.45rem 0.55rem; font-family: var(--mono); font-size: 0.8rem;
     }
+    .lora-box {
+      margin: 0 1rem 1rem; padding: 0.75rem; border: 1px solid var(--line); border-radius: 4px;
+      display: grid; gap: 0.55rem;
+    }
+    .lora-box.hide { display: none; }
+    .lora-box label { font-size: 0.72rem; color: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; }
+    .lora-row { display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: center; }
+    .lora-row input[type="range"] { flex: 1; min-width: 8rem; accent-color: var(--accent); }
+    .lora-id { font-family: var(--mono); font-size: 0.78rem; color: var(--ink); }
+    .lora-val { font-family: var(--mono); font-size: 0.85rem; min-width: 2.6rem; }
+    .recipe-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr)); gap: 0.45rem 0.65rem;
+    }
+    .recipe-grid .field { display: grid; gap: 0.2rem; }
+    .recipe-grid .field span {
+      font-size: 0.68rem; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase;
+    }
+    .recipe-grid input[type="number"], .recipe-grid select {
+      background: #0a0b08; color: var(--ink); border: 1px solid var(--line);
+      border-radius: 4px; padding: 0.4rem 0.5rem; font-family: var(--mono); font-size: 0.8rem;
+      width: 100%;
+    }
+    .recipe-box.locked { opacity: 0.55; }
+    .recipe-box.locked input, .recipe-box.locked select, .recipe-box.locked button,
+    .recipe-box.locked label { pointer-events: none; }
     a.dl {
       font: 600 0.85rem var(--sans); color: var(--bg); background: var(--accent);
       border: 0; padding: 0.55rem 0.9rem; border-radius: 4px; text-decoration: none;
@@ -184,7 +209,7 @@
       <div class="video-wrap">
         <video id="video" muted playsinline></video>
         <video id="episodeVideo" class="hide" controls playsinline></video>
-        <div class="wait" id="wait">Open stream to start generation.<br/>First clip ~40s cold.</div>
+        <div class="wait" id="wait">Open stream to start generation.</div>
         <div class="episode-stage" id="episodeStage" aria-live="polite">
           <div class="ep-kicker" id="epKicker">Episode</div>
           <div class="ep-title" id="epTitle">Preparing…</div>
@@ -204,20 +229,41 @@
         <button id="btnMute" class="secondary" type="button">Unmute</button>
       </div>
       <div class="meta" id="clipMeta">—</div>
-      <div class="quality-box">
-        <label>Quality (next clip)</label>
+      <div class="quality-box recipe-box" id="recipeBox">
+        <label>Recipe (stop stream to edit)</label>
         <div class="quality-modes" id="qualityModes">
           <label><input type="radio" name="qualityPreset" value="draft" /> draft 320+TR</label>
           <label><input type="radio" name="qualityPreset" value="live" checked /> live 384</label>
           <label><input type="radio" name="qualityPreset" value="sharp" /> sharp 448</label>
           <label><input type="radio" name="qualityPreset" value="long" /> long 243f</label>
         </div>
+        <div class="recipe-grid">
+          <label class="field"><span>Steps</span><input type="number" id="recipeSteps" min="1" max="50" step="1" value="3" /></label>
+          <label class="field"><span>Layers</span><input type="number" id="recipeLayers" min="35" max="50" step="1" value="50" /></label>
+          <label class="field"><span>Reuse</span><input type="number" id="recipeReuse" min="1" max="3" step="1" value="1" /></label>
+          <label class="field"><span>Frames</span><input type="number" id="recipeFrames" min="5" max="362" step="1" value="124" /></label>
+          <label class="field"><span>Render</span>
+            <select id="recipeRender">
+              <option value="320">320²</option>
+              <option value="384" selected>384²</option>
+              <option value="448">448²</option>
+            </select>
+          </label>
+          <label class="field" id="loraScaleField">
+            <span>LoRA scale</span>
+            <input type="number" id="loraScale" min="0.1" max="1.5" step="0.05" value="0.80" />
+          </label>
+        </div>
         <div class="quality-toggles">
+          <label><input type="checkbox" id="tokenReduction" /> Token-reduction</label>
           <label><input type="checkbox" id="ensembleOnly" /> Ensemble-only scenes</label>
         </div>
+        <div class="lora-row hide" id="loraRow">
+          <span class="lora-id" id="loraName">—</span>
+        </div>
         <div class="prompt-actions">
-          <button id="btnApplyQuality" type="button">Apply quality</button>
-          <span class="prompt-note" id="qualityNote">Default live = 384² render, no token-reduction. sharp = full 448 (slower).</span>
+          <button id="btnApplyRecipe" type="button">Apply recipe</button>
+          <span class="prompt-note" id="qualityNote">Stop the stream, tweak, Apply, then Play.</span>
         </div>
       </div>
       <div class="episode-box">
@@ -278,9 +324,20 @@
     const btnApplyPrompt = document.getElementById("btnApplyPrompt");
     const promptModeInputs = () => [...document.querySelectorAll('input[name="promptMode"]')];
     const qualityNote = document.getElementById("qualityNote");
-    const btnApplyQuality = document.getElementById("btnApplyQuality");
+    const btnApplyRecipe = document.getElementById("btnApplyRecipe");
     const ensembleOnly = document.getElementById("ensembleOnly");
+    const tokenReduction = document.getElementById("tokenReduction");
     const qualityInputs = () => [...document.querySelectorAll('input[name="qualityPreset"]')];
+    const recipeBox = document.getElementById("recipeBox");
+    const recipeSteps = document.getElementById("recipeSteps");
+    const recipeLayers = document.getElementById("recipeLayers");
+    const recipeReuse = document.getElementById("recipeReuse");
+    const recipeFrames = document.getElementById("recipeFrames");
+    const recipeRender = document.getElementById("recipeRender");
+    const loraRow = document.getElementById("loraRow");
+    const loraName = document.getElementById("loraName");
+    const loraScale = document.getElementById("loraScale");
+    const loraScaleField = document.getElementById("loraScaleField");
     const episodeScenes = document.getElementById("episodeScenes");
     const btnEpisode = document.getElementById("btnEpisode");
     const btnEpisodeCancel = document.getElementById("btnEpisodeCancel");
@@ -312,11 +369,185 @@
     let promptHydrated = false;
     let appliedMode = "random";
     let appliedText = "";
-    let qualityHydrated = false;
-    let appliedPreset = "live";
-    let appliedEnsemble = false;
+    let recipeHydrated = false;
+    let appliedRecipe = null;
     const sessionId = (crypto.randomUUID && crypto.randomUUID()) ||
       ("s" + Math.random().toString(16).slice(2) + Date.now().toString(16));
+
+    function fmtEta(s) {
+      if (s == null || !Number.isFinite(s)) return null;
+      const n = Math.max(0, Math.round(s));
+      if (n < 60) return n + "s";
+      return Math.floor(n / 60) + "m" + String(n % 60).padStart(2, "0") + "s";
+    }
+
+    function progressLine(s) {
+      const p = (s && s.progress) || null;
+      if (!s || !s.generating) return null;
+      const bits = [];
+      if (p && p.label) bits.push(p.label);
+      else if (p && p.stage) bits.push(p.stage);
+      else bits.push("starting…");
+      if (s.gen_elapsed_s != null) bits.push(s.gen_elapsed_s.toFixed(0) + "s elapsed");
+      if (p && p.eta_s != null) bits.push("ETA " + fmtEta(p.eta_s));
+      if (p && p.avg_step_s != null) bits.push(p.avg_step_s.toFixed(1) + "s/it");
+      if (s.gpu_pct != null) bits.push("GPU " + s.gpu_pct.toFixed(0) + "%");
+      return bits.join(" · ");
+    }
+
+    function recipeLocked(s) {
+      if (watching) return true;
+      if (s && s.generating) return true;
+      if (s && s.episode && s.episode.status === "running") return true;
+      if (episodeMode === "running") return true;
+      return false;
+    }
+
+    function selectedQualityPreset() {
+      const el = qualityInputs().find((i) => i.checked);
+      return el ? el.value : "live";
+    }
+
+    function draftRecipe() {
+      const render = Number(recipeRender.value) || 384;
+      const out = {
+        preset: selectedQualityPreset(),
+        steps: Number(recipeSteps.value),
+        layers: Number(recipeLayers.value),
+        reuse: Number(recipeReuse.value),
+        frames: Number(recipeFrames.value),
+        render_width: render,
+        render_height: render,
+        token_reduction: !!tokenReduction.checked,
+        ensemble_only: !!ensembleOnly.checked,
+      };
+      if (loraScaleField && !loraScaleField.classList.contains("hide")) {
+        out.scale = Number(loraScale.value);
+      }
+      return out;
+    }
+
+    function recipeFromStatus(s) {
+      const render = s.render_width || s.render_height || 384;
+      const out = {
+        preset: s.quality_preset || "live",
+        steps: Number(s.steps),
+        layers: Number(s.layers != null ? s.layers : 50),
+        reuse: Number(s.reuse != null ? s.reuse : 1),
+        frames: Number(s.frames),
+        render_width: Number(s.render_width || render),
+        render_height: Number(s.render_height || render),
+        token_reduction: !!s.token_reduction,
+        ensemble_only: !!s.ensemble_only,
+      };
+      if (s.lora && s.lora.scale != null) out.scale = Number(s.lora.scale);
+      return out;
+    }
+
+    function fillRecipeForm(r) {
+      if (!r) return;
+      qualityInputs().forEach((i) => { i.checked = i.value === r.preset; });
+      recipeSteps.value = String(r.steps);
+      recipeLayers.value = String(r.layers);
+      recipeReuse.value = String(r.reuse);
+      recipeFrames.value = String(r.frames);
+      const side = String(r.render_width || r.render_height || 384);
+      if ([...recipeRender.options].some((o) => o.value === side)) {
+        recipeRender.value = side;
+      } else {
+        recipeRender.value = "384";
+      }
+      tokenReduction.checked = !!r.token_reduction;
+      ensembleOnly.checked = !!r.ensemble_only;
+      if (r.scale != null) loraScale.value = Number(r.scale).toFixed(2);
+    }
+
+    function recipeDirty() {
+      if (!appliedRecipe) return false;
+      const d = draftRecipe();
+      const a = appliedRecipe;
+      const keys = Object.keys(a);
+      return keys.some((k) => {
+        if (typeof a[k] === "number") return Math.abs(Number(d[k]) - Number(a[k])) > 0.001;
+        return d[k] !== a[k];
+      }) || (d.scale != null && a.scale == null) || (d.scale == null && a.scale != null);
+    }
+
+    function setRecipeLock(s) {
+      const locked = recipeLocked(s);
+      recipeBox.classList.toggle("locked", locked);
+      btnApplyRecipe.disabled = locked;
+      if (locked) {
+        qualityNote.textContent = watching
+          ? "Stop the stream to edit recipe."
+          : "Generation running — stop / cancel before editing recipe.";
+      } else if (recipeDirty()) {
+        qualityNote.textContent = "Draft recipe — Apply before Play.";
+      } else if (s && s.recipe_note) {
+        qualityNote.textContent = "Applied: " + s.recipe_note;
+      } else {
+        qualityNote.textContent = "Stop the stream, tweak, Apply, then Play.";
+      }
+    }
+
+    function updateRecipeUi(s) {
+      const lora = s && s.lora;
+      if (lora && lora.id) {
+        loraRow.classList.remove("hide");
+        loraScaleField.classList.remove("hide");
+        loraName.textContent = (lora.label || lora.id) + " · " + lora.id;
+      } else {
+        loraRow.classList.add("hide");
+        loraScaleField.classList.add("hide");
+      }
+      if (!recipeHydrated && s) {
+        appliedRecipe = recipeFromStatus(s);
+        fillRecipeForm(appliedRecipe);
+        recipeHydrated = true;
+      } else if (s && !recipeDirty() && !recipeLocked(s)) {
+        appliedRecipe = recipeFromStatus(s);
+        fillRecipeForm(appliedRecipe);
+      }
+      setRecipeLock(s);
+    }
+
+    function onRecipeDraftChange() {
+      setRecipeLock(lastStatus);
+    }
+
+    qualityInputs().forEach((input) => input.addEventListener("change", onRecipeDraftChange));
+    [recipeSteps, recipeLayers, recipeReuse, recipeFrames, recipeRender, loraScale, tokenReduction, ensembleOnly]
+      .forEach((el) => el.addEventListener("change", onRecipeDraftChange));
+    loraScale.addEventListener("input", onRecipeDraftChange);
+
+    btnApplyRecipe.addEventListener("click", async () => {
+      if (recipeLocked(lastStatus)) {
+        qualityNote.textContent = "Stop the stream before applying recipe.";
+        return;
+      }
+      const body = draftRecipe();
+      body.action = "set_recipe";
+      body.session = sessionId;
+      btnApplyRecipe.disabled = true;
+      try {
+        const r = await fetch("/api/control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!j.ok) {
+          qualityNote.textContent = j.error || "Apply failed";
+          return;
+        }
+        appliedRecipe = draftRecipe();
+        refreshStatus();
+      } catch (_) {
+        qualityNote.textContent = "Apply failed — check the server.";
+      } finally {
+        setRecipeLock(lastStatus);
+      }
+    });
 
     function metric(k, v, cls) {
       return `<div class="metric"><span class="k">${k}</span><span class="v ${cls || ""}">${v}</span></div>`;
@@ -447,61 +678,6 @@
       }
     });
 
-    function selectedQualityPreset() {
-      const el = qualityInputs().find((i) => i.checked);
-      return el ? el.value : "live";
-    }
-
-    function qualityDirty() {
-      return selectedQualityPreset() !== appliedPreset ||
-        !!ensembleOnly.checked !== !!appliedEnsemble;
-    }
-
-    function updateQualityNote(s) {
-      const note = (s && s.recipe_note) || "";
-      if (qualityDirty()) {
-        qualityNote.textContent = "Draft quality — Apply to use on the next clip.";
-      } else if (note) {
-        qualityNote.textContent = "Applied: " + note;
-      } else {
-        qualityNote.textContent = "Default live = 384² render, no token-reduction.";
-      }
-    }
-
-    qualityInputs().forEach((input) => {
-      input.addEventListener("change", () => updateQualityNote(lastStatus));
-    });
-    ensembleOnly.addEventListener("change", () => updateQualityNote(lastStatus));
-
-    btnApplyQuality.addEventListener("click", async () => {
-      const preset = selectedQualityPreset();
-      btnApplyQuality.disabled = true;
-      try {
-        const r = await fetch("/api/control", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "set_quality",
-            preset,
-            ensemble_only: !!ensembleOnly.checked,
-            session: sessionId,
-          }),
-        });
-        const j = await r.json();
-        if (!j.ok) {
-          qualityNote.textContent = j.error || "Apply failed";
-          return;
-        }
-        appliedPreset = preset;
-        appliedEnsemble = !!ensembleOnly.checked;
-        refreshStatus();
-      } catch (_) {
-        qualityNote.textContent = "Apply failed — check the server.";
-      } finally {
-        btnApplyQuality.disabled = false;
-      }
-    });
-
     function updateEpisodeUi(s) {
       const ep = (s && s.episode) || {};
       const st = ep.status || "idle";
@@ -545,8 +721,10 @@
         epTitle.textContent = `Scene ${cur} of ${total}`;
         const bits = [];
         if (ep.last_cast) bits.push(ep.last_cast);
-        if (s && s.gpu_pct != null) bits.push(`GPU ${s.gpu_pct.toFixed(0)}%`);
-        if (ep.elapsed_s != null) bits.push(`${ep.elapsed_s}s elapsed`);
+        const prog = progressLine(s);
+        if (prog) bits.push(prog);
+        else if (s && s.gpu_pct != null) bits.push(`GPU ${s.gpu_pct.toFixed(0)}%`);
+        if (ep.elapsed_s != null) bits.push(`${ep.elapsed_s}s wall`);
         bits.push("Live stopped");
         epSub.textContent = bits.join(" · ");
         episodeNote.textContent =
@@ -847,9 +1025,24 @@
           metric("RAM", s.ram_used_gb != null ? `${s.ram_used_gb.toFixed(1)} / ${s.ram_total_gb.toFixed(0)} GiB` : "—"),
           metric("h3 RSS", s.h3_rss_gb != null ? `${s.h3_rss_gb.toFixed(1)} GiB` : "idle"),
           metric("Viewers", `${s.viewers ?? 0} ts · ${s.watchers ?? 0} web`),
+          metric("Stage", (() => {
+            const p = s.progress;
+            if (s.generating && p && p.label) return p.label;
+            if (s.generating) return "starting…";
+            return "idle";
+          })(), s.generating ? "warn" : ""),
+          metric("ETA", (() => {
+            const p = s.progress;
+            if (s.generating && p && p.eta_s != null) return fmtEta(p.eta_s);
+            if (s.generating && s.gen_elapsed_s != null) return s.gen_elapsed_s.toFixed(0) + "s in";
+            return "—";
+          })(), s.generating ? "warn" : ""),
+          metric("Elapsed", s.gen_elapsed_s != null ? `${s.gen_elapsed_s.toFixed(1)}s` : "—"),
           metric("Last gen", s.last_gen_s != null ? `${s.last_gen_s.toFixed(1)}s` : "—"),
+          metric("Phases", s.last_phases || "—"),
           metric("Margin", s.margin_s != null ? `${s.margin_s >= 0 ? "+" : ""}${s.margin_s.toFixed(1)}s` : "—", marginCls),
           metric("Recipe", s.recipe_note || `${s.width}×${s.height} · ${s.frames}f · ${s.steps} step`),
+          metric("LoRA", s.lora ? `${s.lora.id} @ ${Number(s.lora.scale).toFixed(2)}` : "none"),
           metric("Play fps", s.play_fps > 0 ? s.play_fps.toFixed(2) : "…"),
           metric("Gen", s.paused ? "paused" : (s.generating ? "running" : "waiting"), s.paused ? "warn" : ""),
           metric("Episode", (() => {
@@ -863,6 +1056,7 @@
           metric("Next prompt", s.next_prompt_note || s.prompt_mode || "—"),
         ].join("");
         updateEpisodeUi(s);
+        updateRecipeUi(s);
         // Hydrate the editor once from the server; never fight the user after that.
         if (!promptHydrated) {
           appliedMode = s.prompt_mode === "custom" ? "custom" : "random";
@@ -874,25 +1068,18 @@
         } else if (!draftIsDirty()) {
           updatePromptNote();
         }
-        if (!qualityHydrated) {
-          appliedPreset = s.quality_preset || "live";
-          appliedEnsemble = !!s.ensemble_only;
-          qualityInputs().forEach((i) => { i.checked = i.value === appliedPreset; });
-          ensembleOnly.checked = appliedEnsemble;
-          qualityHydrated = true;
-          updateQualityNote(s);
-        } else if (!qualityDirty()) {
-          updateQualityNote(s);
-        }
         if (s.pool_scenes) {
           promptText.placeholder =
             `Paste a full H3 prompt, then Apply. {NAME}/{NAME2} OK. Pool has ${s.pool_scenes} scenes when Random is applied.`;
         }
         if (watching && !player && episodeMode !== "running" && episodeMode !== "ready") {
-          if (s.generating) {
-            wait.textContent = `Generating… GPU ${s.gpu_pct != null ? s.gpu_pct.toFixed(0) + "%" : "…"} · first clip ~40s`;
+          const line = progressLine(s);
+          if (line) {
+            wait.textContent = line;
           } else if (s.media_ready) {
             wait.textContent = "Clip ready — attaching player…";
+          } else if (!s.generating) {
+            wait.textContent = "Waiting for producer…";
           }
         }
         if (episodeMode === "running" || episodeMode === "ready") {
@@ -949,10 +1136,10 @@
     });
 
     setPlaying(false);
-    wait.innerHTML = "Open stream to start generation.<br/>" + vlcHint();
+    wait.textContent = "Open stream to start generation.";
     refreshStatus();
     refreshLogs();
-    setInterval(refreshStatus, 1500);
+    setInterval(refreshStatus, 1000);
     setInterval(refreshLogs, 1000);
   </script>
 </body>

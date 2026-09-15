@@ -45,7 +45,7 @@ python liveserver.py
 | LoRA | none (student replaces the base DiT) |
 | Play fps | **adaptive** (`--fps 0`, default): `frames / (gen_s × --margin)`; clamp `--min-fps`/`--max-fps`. Fixed: `--fps N` |
 
-**Prompt pool (default):** The Office only — `prompts_scenes_office.txt` × `h3_characters_office.json` (Dwight, Jim, Michael, Pam, Andy). **On-set only.** Every prompt locks **NBC The Office mockumentary / talking-head documentary look** (fluorescent office light, show colour grade, set dressing). Mostly **single-face medium close-ups already facing the camera** (no turns); sparse side-by-side two-shots. **Near-static** (static or tiny slow push-in) for low play-fps detail. Originals: `prompts_scenes.txt`, `prompts_scenes_2.txt`, `h3_characters.json`.
+**Prompt pool (default):** The Office only — `prompts_scenes_office.txt` × `h3_characters_office.json` (Dwight, Jim, Michael, Pam, Andy). **On-set only.** Every prompt locks **NBC The Office mockumentary / talking-head look**. Faces **already toward camera** (no behind-head reveals). Mostly solos + sparse two-shots. **Subtle live micro-motion** (blinks, breath, small shifts) and gentle camera moves (static / slow push-pull / truck / arc) — not freeze-frames, not action. Originals: `prompts_scenes.txt`, `prompts_scenes_2.txt`, `h3_characters.json`.
 
 ```bash
 python liveserver.py \
@@ -162,8 +162,9 @@ VAE tiles. Play fps defaults to adaptive so faster Macs raise the rate automatic
 ## Why not base + LoRA
 
 The Live card’s measured ~19–22 fps on a 5090 is the **full student** (then
-quantized/pruned for Comfy). A ~1 GB LoRA on stock FL2VA is a different, slower
-object. Metal frontier work here:
+quantized/pruned for Comfy). A multi-GB LoRA on stock FL2VA is a different, slower
+object — default Live stays on FastH3-INT8. **Exception:** explicit A/B with
+[`--lora taomate_h3_3step`](#taomate-3-step-trial-base-fl2va--lora). Metal frontier work here:
 
 1. **Weights** — Diffusers FastH3 → native fused QKV / gate-first SwiGLU / F32 heads
    (`scripts/convert_fasth3_diffusers_to_native.py`)
@@ -206,6 +207,33 @@ Full commands + interpret: [`OVERNIGHT.md`](OVERNIGHT.md).
 | [`scripts/convert_fasth3_diffusers_to_native.py`](scripts/convert_fasth3_diffusers_to_native.py) | Student layout bridge |
 | [`scripts/prepare_fasth3_native_tree.sh`](scripts/prepare_fasth3_native_tree.sh) | Hybrid `-d` tree |
 | [`scripts/sync_fasth3_live_bucket.sh`](scripts/sync_fasth3_live_bucket.sh) | Prompt/code (+ optional Comfy refs) |
+
+## TaoMate 3-step trial (base FL2VA + LoRA)
+
+[TaoMate-H3](https://huggingface.co/TaoLiveAIGC/TaoMate-H3) is Alibaba’s streaming
+3-step EMA adapter for **stock MiniMax-H3 FL2VA** — not the FastH3 student DiT.
+ComfyUI conversion we wire: [Robert1212star/TaoMate-H3-3Step-ComfyUI](https://huggingface.co/Robert1212star/TaoMate-H3-3Step-ComfyUI)
+(`taomate_h3_3step_comfy.safetensors`, ~2.5 GB). Catalog id: **`taomate_h3_3step`**.
+
+```bash
+# Downloads LoRA on first run; uses models/MiniMax-H3 (not FastH3-INT8).
+python liveserver.py --lora taomate_h3_3step -v
+# → steps=3, scale=0.8, stock FL2VA automatically
+# Optional: --lora-scale 0.65 --steps 3 --model-dir models/MiniMax-H3
+# Dashboard LoRA slider Apply changes strength for the next clip (DiT reload).
+# Speed A/B (keeps quality TR off): --render-width 320 --render-height 320
+# Metal phase dump: --profile
+```
+
+Warm baseline @384² / 124f / 3 steps (scale 1.0, M3 Ultra): ~55 s/clip —
+**denoise ~36 s (66%)**, **video VAE ~15 s (27%)**, text ~2 s. Shorter frames
+barely help sustain fps (fixed overhead). Prefer smaller render or fewer DiT
+layers for speed; do not enable token-reduction (doubled subjects on Live).
+Dashboard `/api/status` exposes live `progress` (stage/step/ETA) and `last_phases`.
+
+Do **not** stack TaoMate on `MiniMax-H3-FastH3*`. Compare warm sustain vs the default
+FastH3 student (`python liveserver.py`) before adopting. h3.c has no ManualSigmas —
+community 3-step ladder `1.0, 0.961165, 0.853333, 0.0` is Comfy-only guidance.
 
 ## Episode batch (download)
 

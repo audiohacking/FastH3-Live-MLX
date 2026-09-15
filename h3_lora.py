@@ -24,6 +24,15 @@ TUTU_GUIDANCE = (
 CATALOG_SOURCE = "https://www.stablediffusiontutorials.com/2026/08/minimax-h3-lora-models.html"
 LIGHTX2V_REPO = "lightx2v/Minimax-h3-Turbo"
 LARRYVRH_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
+TAOMATE_REPO = "Robert1212star/TaoMate-H3-3Step-ComfyUI"
+TAOMATE_GUIDANCE = (
+    "TaoMate-H3 3-step EMA streaming adapter (ComfyUI key layout). "
+    "Use stock MiniMax-H3 FL2VA — not the FastH3 student DiT. "
+    "Live default: 3 Euler steps at strength 0.8 (dashboard slider). "
+    "h3.c uses its own shifted schedule (no ManualSigmas). Community sigma "
+    "ladder for Comfy: 1.0, 0.961165, 0.853333, 0.0. Rebuild h3 after pull "
+    "so --lora fuses."
+)
 
 
 def _hf(repo: str, filename: str) -> str:
@@ -196,6 +205,16 @@ BUILTIN_LORAS: list[dict[str, Any]] = [
         steps=4,
         repo="zerubroberts/MiniMax-H3-FastH3-v1-dense-datafree-ComfyUI",
         guidance="FastH3 v1 dense datafree ComfyUI conversion. Try 4 Euler steps.",
+    ),
+    _entry(
+        lid="taomate_h3_3step",
+        label="TaoMate-H3 3-step (ComfyUI)",
+        spec=_hf(TAOMATE_REPO, "taomate_h3_3step_comfy.safetensors"),
+        scale=0.8,
+        category="Speed",
+        steps=3,
+        repo=TAOMATE_REPO,
+        guidance=TAOMATE_GUIDANCE,
     ),
     _entry(
         lid="realism_people",
