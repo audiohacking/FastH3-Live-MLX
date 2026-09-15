@@ -71,18 +71,11 @@ from h3_live.dashboard import (  # noqa: E402
     logs_after,
 )
 from h3_live.episode import (  # noqa: E402
-    EPISODE_FRAMES,
-    EPISODE_HEIGHT,
-    EPISODE_LAYERS,
-    EPISODE_RECIPE_NOTE,
-    EPISODE_RENDER_HEIGHT,
-    EPISODE_RENDER_WIDTH,
-    EPISODE_REUSE,
-    EPISODE_TOKEN_REDUCTION,
-    EPISODE_WIDTH,
     EpisodeJob,
+    EpisodeRecipe,
     clamp_scene_count,
     concat_mp4s,
+    parse_episode_recipe,
 )
 from h3_live.pace import adaptive_play_fps, ema  # noqa: E402
 from h3_live.presets import (  # noqa: E402
@@ -483,18 +476,19 @@ class Broadcast:
                 elif action == "episode_start":
                     try:
                         scenes = clamp_scene_count(body.get("scenes", 1))
+                        recipe = parse_episode_recipe(body)
                     except ValueError as exc:
                         self._json(400, {"ok": False, "error": str(exc)})
                         return
                     try:
-                        broadcast.start_episode(scenes)
+                        broadcast.start_episode(scenes, recipe)
                     except RuntimeError as exc:
                         self._json(409, {"ok": False, "error": str(exc)})
                         return
                     log.info(
                         "episode start — %d scene(s); live stopped\n%s",
                         scenes,
-                        EPISODE_RECIPE_NOTE,
+                        recipe.label(),
                     )
                 elif action == "episode_cancel":
                     broadcast.cancel_all("episode cancel")
@@ -747,17 +741,18 @@ class Broadcast:
         self.cancel_generation(reason, force=True)
         log.info("live stopped — %s", reason)
 
-    def start_episode(self, scenes: int) -> None:
+    def start_episode(self, scenes: int, recipe: EpisodeRecipe | None = None) -> None:
+        recipe = recipe or EpisodeRecipe()
         with self.state.lock:
             if self.state.episode.is_active():
                 raise RuntimeError("an episode is already generating")
             if self._episode_runner is None:
                 raise RuntimeError("episode runner not ready")
-            self.state.episode.reset_for_start(scenes)
+            self.state.episode.reset_for_start(scenes, recipe)
         self.stop_live("episode batch started")
         threading.Thread(
             target=self._episode_runner,
-            args=(scenes,),
+            args=(scenes, recipe),
             name="h3live-episode",
             daemon=True,
         ).start()
@@ -1313,12 +1308,14 @@ def main(argv: list[str] | None = None) -> int:
     gen_ema: float | None = None
     ready = threading.Event()
 
-    def run_episode(scenes: int) -> None:
-        """Exclusive batch: sharp canvas, native 24 fps concat, no stream retime."""
+    def run_episode(scenes: int, recipe: EpisodeRecipe | None = None) -> None:
+        """Exclusive batch: native 24 fps concat, no stream retime."""
+        recipe = recipe or EpisodeRecipe()
         episode_dir = out_root / "episode"
         episode_dir.mkdir(parents=True, exist_ok=True)
         clips: list[Path] = []
         job = state.episode
+        note = recipe.label()
         try:
             with state.lock:
                 pool.ensemble_only = state.ensemble_only
@@ -1349,7 +1346,7 @@ def main(argv: list[str] | None = None) -> int:
                     source,
                     seed,
                     cast,
-                    EPISODE_RECIPE_NOTE,
+                    note,
                     len(prompt),
                     prompt,
                 )
@@ -1363,16 +1360,16 @@ def main(argv: list[str] | None = None) -> int:
                 req = GenerateRequest(
                     prompt=prompt,
                     output_path=mp4,
-                    width=EPISODE_WIDTH,
-                    height=EPISODE_HEIGHT,
-                    render_width=EPISODE_RENDER_WIDTH,
-                    render_height=EPISODE_RENDER_HEIGHT,
-                    num_frames=EPISODE_FRAMES,
+                    width=recipe.width,
+                    height=recipe.height,
+                    render_width=recipe.render_width,
+                    render_height=recipe.render_height,
+                    num_frames=recipe.frames,
                     quality="four_step",
-                    steps=args.steps,
-                    layers=EPISODE_LAYERS,
-                    reuse=EPISODE_REUSE,
-                    token_reduction=EPISODE_TOKEN_REDUCTION,
+                    steps=recipe.steps,
+                    layers=recipe.layers,
+                    reuse=recipe.reuse,
+                    token_reduction=recipe.token_reduction,
                     seed=seed,
                     ssd_streaming=False,
                     int8_row_fc2=bool(args.int8_row_fc2),

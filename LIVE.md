@@ -45,7 +45,7 @@ python liveserver.py
 | LoRA | none (student replaces the base DiT) |
 | Play fps | **adaptive** (`--fps 0`, default): `frames / (gen_s × --margin)`; clamp `--min-fps`/`--max-fps`. Fixed: `--fps N` |
 
-**Prompt pool (default):** The Office only — `prompts_scenes_office.txt` × `h3_characters_office.json` (Dwight, Jim, Michael, Pam, Andy). **On-set only.** Every prompt locks **NBC The Office mockumentary / talking-head look**. Faces **already toward camera** (no behind-head reveals). Mostly solos + sparse two-shots. **Subtle live micro-motion** (blinks, breath, small shifts) and gentle camera moves (static / slow push-pull / truck / arc) — not freeze-frames, not action. Originals: `prompts_scenes.txt`, `prompts_scenes_2.txt`, `h3_characters.json`.
+**Prompt pool (default):** The Office only — `prompts_scenes_office.txt` × `h3_characters_office.json` (Michael, Dwight, Jim, Pam, Andy) + `h3_office_lines.json`. **On-set mockumentary look.** Faces already toward camera. Mostly solos + sparse two-shots with subtle micro-motion. Speak beats use `{QUOTE}` filled from that character’s **short** famous lines (≤~6 words for <5s clips). Fair cast weighting. Originals: `prompts_scenes.txt`, `prompts_scenes_2.txt`, `h3_characters.json`.
 
 ```bash
 python liveserver.py \
@@ -238,10 +238,11 @@ community 3-step ladder `1.0, 0.961165, 0.853333, 0.0` is Comfy-only guidance.
 ## Episode batch (download)
 
 Exclusive with Live: **Generate episode** stops the stream, clears watchers, and
-owns ``./h3`` until the job finishes. Recipe is full **448²**, no token-reduction,
-native **24 fps** MP4 concat (no play-fps retime). Choose **1–10** scenes on the
-dashboard; download ``/api/episode.mp4`` when status is ready. Live Play works again
-after the batch ends or is cancelled.
+owns ``./h3`` until the job finishes. Dashboard knobs (no Live sustain limits):
+**1–10** scenes, per-clip duration **5 / 10 / 15 s**, render **320 / 384 / 448**,
+steps / layers / reuse / token-reduction. Native **24 fps** MP4 concat (no
+play-fps retime). Uses the active LoRA if loaded. Download ``/api/episode.mp4``
+when status is ready. Live Play works again after the batch ends or is cancelled.
 
 
 ```bash

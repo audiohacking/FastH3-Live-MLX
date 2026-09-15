@@ -52,15 +52,53 @@ class PromptPoolTests(unittest.TestCase):
             self.assertLessEqual(n, 3)
             self.assertGreaterEqual(n, 1)
 
-    def test_cast_names_are_unique(self) -> None:
+    def test_cast_distribution_is_fair(self) -> None:
         pool = PromptPool(curated_share=1.0, ensemble_bias=0.0)
-        for _ in range(50):
+        from collections import Counter
+
+        counts: Counter[str] = Counter()
+        for _ in range(200):
+            _prompt, cast, _idx = pool.draw()
+            for name in cast.split(" + "):
+                if name != "(no cast)":
+                    counts[name] += 1
+        # With 5 Office names, 200 draws should not starve anyone.
+        self.assertEqual(set(counts), set(pool.full))
+        mean = sum(counts.values()) / len(counts)
+        for name, n in counts.items():
+            self.assertGreater(n, mean * 0.35, f"{name} starved: {dict(counts)}")
+
+    def test_dialogue_uses_famous_office_lines(self) -> None:
+        from h3_live import DATA_DIR
+        import json
+        import re
+
+        lines = json.loads(
+            (DATA_DIR / "h3_office_lines.json").read_text(encoding="utf-8")
+        )
+        for bank in lines.values():
+            for phrase in bank:
+                self.assertLessEqual(len(phrase.split()), 6, phrase)
+
+        pool = PromptPool(curated_share=1.0)
+        text = (DATA_DIR / "prompts_scenes_office.txt").read_text(encoding="utf-8")
+        self.assertIn("{QUOTE}", text)
+        # Speak templates keep {QUOTE}; fill picks a matching short line.
+        matched = 0
+        for _ in range(80):
             prompt, cast, _idx = pool.draw()
-            names = cast.split(" + ")
-            self.assertEqual(len(names), len(set(names)), cast)
-            self.assertNotIn("{NAME}", prompt)
-            self.assertNotIn("{NAME2}", prompt)
-            self.assertNotIn("{NAME3}", prompt)
+            if "<d>" not in prompt:
+                continue
+            self.assertNotIn("{QUOTE}", prompt)
+            m = re.search(r"<d>\[English\] (.*?)</d>", prompt)
+            self.assertIsNotNone(m)
+            line = m.group(1)
+            who = cast.split(" + ")[0]
+            self.assertIn(line, lines[who], f"{who} said {line!r}")
+            matched += 1
+            if matched >= 10:
+                break
+        self.assertGreaterEqual(matched, 10)
 
     def test_office_scenes_are_static_face_forward(self) -> None:
         pool = PromptPool()

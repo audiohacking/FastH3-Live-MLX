@@ -281,11 +281,40 @@
             <option value="9">9 scenes</option>
             <option value="10">10 scenes</option>
           </select>
+          <select id="episodeDuration" aria-label="Clip duration">
+            <option value="5" selected>5 s / clip</option>
+            <option value="10">10 s / clip</option>
+            <option value="15">15 s / clip</option>
+          </select>
+          <select id="episodeRender" aria-label="Render size">
+            <option value="320">320² render</option>
+            <option value="384">384² render</option>
+            <option value="448" selected>448² sharp</option>
+          </select>
+        </div>
+        <div class="episode-row">
+          <label class="field" style="display:grid;gap:0.2rem">
+            <span style="font-size:0.68rem;color:var(--muted);text-transform:uppercase">Steps</span>
+            <input type="number" id="episodeSteps" min="1" max="50" step="1" value="4" style="width:4.5rem;background:#0a0b08;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:0.4rem 0.5rem;font-family:var(--mono);font-size:0.8rem" />
+          </label>
+          <label class="field" style="display:grid;gap:0.2rem">
+            <span style="font-size:0.68rem;color:var(--muted);text-transform:uppercase">Layers</span>
+            <input type="number" id="episodeLayers" min="35" max="50" step="1" value="50" style="width:4.5rem;background:#0a0b08;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:0.4rem 0.5rem;font-family:var(--mono);font-size:0.8rem" />
+          </label>
+          <label class="field" style="display:grid;gap:0.2rem">
+            <span style="font-size:0.68rem;color:var(--muted);text-transform:uppercase">Reuse</span>
+            <input type="number" id="episodeReuse" min="1" max="3" step="1" value="1" style="width:4.5rem;background:#0a0b08;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:0.4rem 0.5rem;font-family:var(--mono);font-size:0.8rem" />
+          </label>
+          <label style="display:flex;align-items:center;gap:0.35rem;font-size:0.85rem">
+            <input type="checkbox" id="episodeTR" /> Token-reduction
+          </label>
+        </div>
+        <div class="episode-row">
           <button id="btnEpisode" type="button">Generate episode</button>
           <button id="btnEpisodeCancel" class="secondary" type="button" disabled>Cancel episode</button>
           <a class="dl hide" id="btnEpisodeDl" href="/api/episode.mp4" download="fasth3-episode.mp4">Download MP4</a>
         </div>
-        <span class="prompt-note" id="episodeNote">Full 448 canvas, no token-reduction, native 24 fps — not streamed. Starts by stopping Live.</span>
+        <span class="prompt-note" id="episodeNote">Per-clip duration up to 15 s · native 24 fps concat · not streamed. Stops Live while running. Uses the active LoRA if loaded.</span>
       </div>
       <div class="prompt-box">
         <label>Next clip prompt</label>
@@ -339,6 +368,12 @@
     const loraScale = document.getElementById("loraScale");
     const loraScaleField = document.getElementById("loraScaleField");
     const episodeScenes = document.getElementById("episodeScenes");
+    const episodeDuration = document.getElementById("episodeDuration");
+    const episodeRender = document.getElementById("episodeRender");
+    const episodeSteps = document.getElementById("episodeSteps");
+    const episodeLayers = document.getElementById("episodeLayers");
+    const episodeReuse = document.getElementById("episodeReuse");
+    const episodeTR = document.getElementById("episodeTR");
     const btnEpisode = document.getElementById("btnEpisode");
     const btnEpisodeCancel = document.getElementById("btnEpisodeCancel");
     const btnEpisodeDl = document.getElementById("btnEpisodeDl");
@@ -359,7 +394,7 @@
     let attachTimer = null;
     let heartbeatTimer = null;
     let lastStatus = null;
-    let episodeMode = "idle"; // idle | running | ready | error | cancelled
+    let episodeControlsHydrated = false;
     let episodeBlobUrl = null;
     let episodeLoadedUrl = null;
     // When true, the video stage belongs to Live (Play stream) even if an
@@ -686,8 +721,16 @@
       btnEpisode.disabled = running || watching;
       btnEpisodeCancel.disabled = !running;
       btnEpisodeCancelStage.classList.toggle("hide", !running);
-      episodeScenes.disabled = running;
+      [
+        episodeScenes, episodeDuration, episodeRender,
+        episodeSteps, episodeLayers, episodeReuse, episodeTR,
+      ].forEach((el) => { el.disabled = running || watching; });
       btnPlay.disabled = running || watching;
+      // Once: seed episode steps from the live recipe (e.g. TaoMate 3-step).
+      if (!episodeControlsHydrated && s && !running) {
+        if (s.steps) episodeSteps.value = String(s.steps);
+        episodeControlsHydrated = true;
+      }
       const dlHref = ep.download_url
         ? ep.download_url + (ep.download_url.includes("?") ? "&" : "?") + "t=" + Date.now()
         : null;
@@ -856,6 +899,12 @@
           body: JSON.stringify({
             action: "episode_start",
             scenes,
+            duration_s: Number(episodeDuration.value) || 5,
+            render_width: Number(episodeRender.value) || 448,
+            steps: Number(episodeSteps.value) || 4,
+            layers: Number(episodeLayers.value) || 50,
+            reuse: Number(episodeReuse.value) || 1,
+            token_reduction: !!episodeTR.checked,
             session: sessionId,
           }),
         });
