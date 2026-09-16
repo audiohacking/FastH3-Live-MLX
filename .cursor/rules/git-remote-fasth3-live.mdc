@@ -1,0 +1,17 @@
+---
+description: Sole GitHub remote for this workspace — never push elsewhere
+alwaysApply: true
+---
+
+# Git remote (mandatory)
+
+**The only remote for this project is:**
+
+`https://github.com/audiohacking/FastH3-Live-MLX`
+
+- `origin` **must** point there. Never add or push to `lmangani/h3-ws` or any other GitHub repo from this workspace.
+- Before every `git push`, run `git remote -v` and confirm `origin` is `audiohacking/FastH3-Live-MLX`.
+- If `origin` is wrong, fix it first:  
+  `git remote set-url origin https://github.com/audiohacking/FastH3-Live-MLX.git`
+- Do not create secondary remotes that point at other repos.
+- A mistaken push to another repo is a critical incident: stop, revert that remote’s `main`/tags to the pre-push SHA, then push only to FastH3-Live-MLX.
