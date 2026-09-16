@@ -21,12 +21,20 @@ _log_id = 0
 class RingLogHandler(logging.Handler):
     """Capture live logger lines for the browser console."""
 
+    # Keep the dashboard readable; full prompts stay on the server console.
+    MAX_MSG = 480
+
     def emit(self, record: logging.LogRecord) -> None:
         global _log_id
         try:
             msg = self.format(record)
         except Exception:
             msg = record.getMessage()
+        msg = " ".join(str(msg).split())
+        if len(msg) > self.MAX_MSG:
+            msg = msg[: self.MAX_MSG - 1] + "…"
+        if not msg:
+            return
         with _log_lock:
             _log_id += 1
             _log_lines.append(
@@ -39,13 +47,21 @@ class RingLogHandler(logging.Handler):
             )
 
 
-def attach_ring_logger(logger_name: str = "h3-live") -> None:
-    root = logging.getLogger(logger_name)
-    if any(isinstance(h, RingLogHandler) for h in root.handlers):
-        return
-    handler = RingLogHandler()
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    root.addHandler(handler)
+def attach_ring_logger(*logger_names: str) -> None:
+    """Attach the ring handler to one or more loggers (idempotent per logger)."""
+    names = logger_names or ("h3-live",)
+    for name in names:
+        root = logging.getLogger(name)
+        if any(isinstance(h, RingLogHandler) for h in root.handlers):
+            continue
+        handler = RingLogHandler()
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        # Progress lines are INFO; keep ring at INFO even if a logger goes DEBUG.
+        handler.setLevel(logging.INFO)
+        root.addHandler(handler)
+        # Child loggers often don't propagate if they have handlers; ensure
+        # these named loggers still emit to our handler.
+        root.setLevel(logging.INFO)
 
 
 def logs_after(after_id: int = 0) -> list[dict]:

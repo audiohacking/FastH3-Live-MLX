@@ -49,9 +49,12 @@
     }
     .stage {
       display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line);
+      overflow-y: auto; /* scroll controls; keep video-wrap from flex-shrinking */
     }
     .video-wrap {
-      position: relative; background: #0a0b08; aspect-ratio: 1 / 1; max-height: min(70vh, 720px);
+      position: relative; background: #0a0b08; aspect-ratio: 1 / 1;
+      width: 100%; max-height: min(78vh, 860px);
+      flex: 0 0 auto; /* don't shrink when recipe/episode panels grow below */
       margin: 1rem; border: 1px solid var(--line); overflow: hidden;
     }
     video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
@@ -394,12 +397,18 @@
     let attachTimer = null;
     let heartbeatTimer = null;
     let lastStatus = null;
+    let episodeMode = "idle"; // idle | running | ready | error | cancelled
     let episodeControlsHydrated = false;
     let episodeBlobUrl = null;
     let episodeLoadedUrl = null;
     // When true, the video stage belongs to Live (Play stream) even if an
     // episode MP4 is ready for download. Cleared on Stop / episode start.
     let liveStageActive = false;
+    // Bare load (no ?episode=) must not auto-play the last batch MP4. Becomes
+    // true when this tab starts a batch, or when the URL asks for it.
+    const urlParams = new URLSearchParams(location.search);
+    let showEpisodePreview =
+      urlParams.has("episode") || urlParams.get("view") === "episode";
     // Prompt editor is owned by the browser — status polls must never clobber it.
     let promptHydrated = false;
     let appliedMode = "random";
@@ -745,6 +754,7 @@
 
       if (running) {
         episodeMode = "running";
+        showEpisodePreview = true; // this tab owns the batch UI
         liveStageActive = false;
         clearEpisodePlayback();
         video.classList.add("hide");
@@ -754,24 +764,27 @@
         const total = ep.scenes_requested || 1;
         const done = ep.scenes_done || 0;
         const cur = ep.current_scene != null ? ep.current_scene : Math.min(done + 1, total);
-        const pct = Math.max(2, Math.min(100, Math.round((done / total) * 100)));
+        const p = (s && s.progress) || ep.progress || null;
+        const sceneFrac = (p && p.pct != null) ? Math.max(0, Math.min(1, p.pct / 100)) : 0.05;
         const livePct = Math.max(
-          pct,
-          Math.round(((Math.max(0, cur - 1) + 0.15) / total) * 100)
+          2,
+          Math.min(100, Math.round(((done + sceneFrac) / total) * 100))
         );
         epBarFill.style.width = livePct + "%";
         epKicker.textContent = "Episode · generating";
-        epTitle.textContent = `Scene ${cur} of ${total}`;
+        const stageLabel = (p && (p.label || p.stage)) || "starting…";
+        epTitle.textContent = `Scene ${cur} of ${total} · ${stageLabel}`;
         const bits = [];
         if (ep.last_cast) bits.push(ep.last_cast);
         const prog = progressLine(s);
         if (prog) bits.push(prog);
-        else if (s && s.gpu_pct != null) bits.push(`GPU ${s.gpu_pct.toFixed(0)}%`);
+        else if (p && p.label) bits.push(p.label);
+        if (s && s.gpu_pct != null) bits.push(`GPU ${s.gpu_pct.toFixed(0)}%`);
         if (ep.elapsed_s != null) bits.push(`${ep.elapsed_s}s wall`);
         bits.push("Live stopped");
         epSub.textContent = bits.join(" · ");
         episodeNote.textContent =
-          `Generating scene ${cur}/${total} · live stopped · ${ep.recipe || "episode"}`;
+          `Generating scene ${cur}/${total} · ${stageLabel} · ${ep.recipe || "episode"}`;
         conn.textContent = "episode";
         conn.classList.add("on");
         return;
@@ -781,12 +794,19 @@
         episodeMode = "ready";
         const mb = ep.bytes != null ? (ep.bytes / (1024 * 1024)).toFixed(1) + " MiB" : "";
         // Live owns the stage while streaming — keep download, don't steal the player.
-        if (watching || liveStageActive) {
+        // Bare page loads also skip auto-play unless ?episode= or this tab ran the batch.
+        if (watching || liveStageActive || !showEpisodePreview) {
           episodeStage.classList.remove("show");
           episodeVideo.classList.add("hide");
+          clearEpisodePlayback();
           video.classList.remove("hide");
-          episodeNote.textContent =
-            `Episode ready${mb ? " · " + mb : ""} — download available. Live view active.`;
+          if (!watching && !liveStageActive) {
+            wait.classList.remove("hide");
+            wait.textContent = "Open stream to start generation.";
+          }
+          episodeNote.textContent = showEpisodePreview
+            ? `Episode ready${mb ? " · " + mb : ""} — download available. Live view active.`
+            : `Last episode ready${mb ? " · " + mb : ""} — download above (not auto-playing). Add ?episode=1 to open it.`;
           return;
         }
         wait.classList.add("hide");
@@ -882,6 +902,7 @@
       btnEpisode.disabled = true;
       episodeNote.textContent = "Stopping Live and starting episode…";
       liveStageActive = false;
+      showEpisodePreview = true;
       // Show stage immediately while the request is in flight.
       video.classList.add("hide");
       episodeVideo.classList.add("hide");
@@ -1053,9 +1074,9 @@
       await postControl("unwatch");
       liveStageActive = false;
       setPlaying(false);
-      // If an episode finished earlier, put that preview back; else idle Live stage.
+      // If this tab ran a batch (or ?episode=), put that preview back; else idle Live.
       const ep = lastStatus && lastStatus.episode;
-      if (ep && ep.status === "ready" && ep.download_ready) {
+      if (showEpisodePreview && ep && ep.status === "ready" && ep.download_ready) {
         updateEpisodeUi(lastStatus);
       } else {
         showIdleStage();

@@ -206,6 +206,8 @@ class EpisodeJob:
     finished_at: float | None = None
     last_cast: str | None = None
     recipe: EpisodeRecipe = field(default_factory=EpisodeRecipe)
+    # Live h3 progress for the current scene (mirrors LiveState.progress).
+    progress: dict[str, Any] | None = None
     cancel: threading.Event = field(default_factory=threading.Event)
     # Scene clip paths kept until next job clears them.
     clip_paths: list[Path] = field(default_factory=list)
@@ -226,6 +228,7 @@ class EpisodeJob:
         self.last_cast = None
         self.clip_paths = []
         self.recipe = recipe or EpisodeRecipe()
+        self.progress = None
 
     def as_dict(self) -> dict[str, Any]:
         elapsed = None
@@ -244,6 +247,7 @@ class EpisodeJob:
             "error": self.error,
             "recipe": self.recipe.label(),
             "recipe_detail": self.recipe.as_dict(),
+            "progress": dict(self.progress) if self.progress else None,
             "download_ready": ready,
             "download_url": "/api/episode.mp4" if ready else None,
             "bytes": size,
